@@ -46,6 +46,8 @@ export const TEMPLATE_FILE = path.join(DATA_DIR, "templates.json");
 const DROPPED_PROPERTIES = [
   "mBuildTimeStamp", "mBlueprintProxy", "mCurrentRecipe", "mDidFirstTimeUse", "mTimeSinceStartStopProducing",
   "mPendingPotential", "mCurrentPotential", "mPendingProductionBoost", "mCurrentProductionBoost",
+  // Signs remember who edited them last (a player account) and the poles they stood on.
+  "mLastEditedBy", "mSignPoles",
 ];
 
 // JSON cannot hold BigInt or -0; tag them so templates survive a save/load cycle unchanged.

@@ -1,5 +1,5 @@
 import { Blueprint } from "@etothepii/satisfactory-file-parser";
-import { BeltEnd, BlueprintBuilder, ConnectorRef, Placed } from "../builder.js";
+import { BeltEnd, BlueprintBuilder, ConnectorRef, Placed, SIGN } from "../builder.js";
 import { Vec3, add, transform, vec } from "../geometry.js";
 import { GameData, pickTier } from "../gamedata/index.js";
 import { PlanOptions, Step, fmt, plan } from "../planner/plan.js";
@@ -7,6 +7,7 @@ import { CELL, DIRS, Dir, Grid, LEVEL, Route, Start, Step as GridStep, perpendic
 import { Branch, buildRoute } from "../layout/route-builder.js";
 import { BuiltRow, LineKind, PreparedRow, beltType, buildRow, libraryFor, liftType, pipeType, prepareRow } from "./machine-row.js";
 import { rowOptionsFor } from "./row-options.js";
+import { iconFor } from "../data/icons.js";
 
 /**
  * A complete factory in one blueprint: every production step of the target item, stacked in floors,
@@ -59,6 +60,14 @@ const PUMP_POLE = "Build_PowerPoleMk2_C";
 const PUMP_POLE_HEIGHT = 400;
 /** Rows are turned so inputs face +Y; their connection end is then at -X. */
 const ROW_YAW = 180;
+/** Signs float this far above the line they describe, and this far outside the routing grid for ports. */
+const SIGN_HEIGHT = 350;
+const SIGN_OFFSET = 150;
+const SIGN_BACKGROUND = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
+/** FICSIT orange for inputs, green for outputs, white for machine rows. */
+const INPUT_COLOR = { r: 0.98, g: 0.45, b: 0.05, a: 1 };
+const OUTPUT_COLOR = { r: 0.15, g: 0.85, b: 0.3, a: 1 };
+const ROW_COLOR = { r: 0.9, g: 0.9, b: 0.9, a: 1 };
 const FLOW_TO_FRONT_YAW = -90;
 
 interface PlacedRow {
@@ -195,7 +204,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     if (!t) throw new Error(`${fmt(perMinute)}/min is more than one ${kind} carries; lower the rate or split the factory.`);
     return kind === "belt" ? Number(t.className.match(/Mk(\d)/)![1]) : /MK2/i.test(t.className) ? 2 : 1;
   };
-  const required = new Set<string>([FOUNDATION_TYPE]);
+  const required = new Set<string>([FOUNDATION_TYPE, SIGN]);
   for (const f of flows) {
     for (const rate of [f.perMinute, ...f.sinks.map((s) => s.perMinute)]) {
       const t = tierFor(f.kind, rate);
@@ -419,6 +428,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     }));
     const end = buildRoute(ctx, line.route, spec, from, branches);
     if (sink.entry) connect(flow, tierFor(flow.kind, sink.perMinute), end, sink.entry.position, vec(1, 0, 0), sink.entry);
+    else ports.push({ flow, at: end.position, side: "output" });
   };
   /** A short belt/pipe moving along `dir` (curving sideways or vertically if needed). */
   function connect(flow: Flow, tier: number, from: BeltEnd, to: Vec3, dir: Vec3, target?: ConnectorRef): BeltEnd {
@@ -430,6 +440,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     const piece = flow.kind === "belt" ? b.belt(beltType(tier), from, end, dir) : b.pipe(pipeType(tier), from, end, dir);
     return { building: piece, name: flow.kind === "belt" ? "ConveyorAny1" : "PipelineConnection1", position: to };
   }
+  const ports: { flow: Flow; at: Vec3; side: "input" | "output" }[] = [];
   for (const line of lines.filter((l) => !l.parent)) {
     const { flow } = line;
     const first = grid.center(line.route.steps[0].cell);
@@ -440,8 +451,35 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     } else {
       // Raw material: an open end on the back edge.
       from = { position: add(first, vec(-CELL / 2, 0, 0)) };
+      ports.push({ flow, at: from.position, side: "input" });
     }
     buildLine(line, from);
+  }
+
+  // Signs: what comes in and goes out (just outside the routing grid, above each open end, facing
+  // away from the factory), and what each row makes (behind its connection end, above its ports).
+  const units = (f: Flow) => (f.kind === "belt" ? "/min" : " m³/min");
+  for (const port of ports) {
+    const outward = port.side === "input" ? -1 : 1;
+    b.sign(vec(port.at.x + outward * SIGN_OFFSET, port.at.y, port.at.z + SIGN_HEIGHT), port.side === "input" ? 180 : 0, {
+      title: port.flow.label.toUpperCase(),
+      label: `${port.side === "input" ? "IN" : "OUT"}  ${fmt(port.flow.perMinute)}${units(port.flow)}`,
+      icon: iconFor(port.flow.label),
+      text: port.side === "input" ? INPUT_COLOR : OUTPUT_COLOR,
+      background: SIGN_BACKGROUND,
+    });
+  }
+  for (const r of rows) {
+    const e = extentOf(r);
+    const levels = Math.max(r.row.inputLines.length, r.row.outputLines.length) - 1;
+    const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
+    b.sign(vec(e.minX - CELL / 2, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 180, {
+      title: `${r.row.options.count}x ${r.row.spec.key.toUpperCase()}`,
+      label: `${fmt(rate)}/min ${r.step.product.name}`,
+      icon: iconFor(r.step.product.name),
+      text: ROW_COLOR,
+      background: SIGN_BACKGROUND,
+    });
   }
 
   // One power grid: each row's last pole wired to the next row's first pole, pump poles to the last row pole.
