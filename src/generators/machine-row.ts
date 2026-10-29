@@ -169,12 +169,13 @@ export function prepareRow(options: MachineRowOptions): PreparedRow {
   const spec = findMachine(options.machine);
   if (!Number.isInteger(options.count) || options.count < 1) throw new Error("count must be a positive integer.");
   const all = connectorsOf(spec.type);
+  // Generators' connectors are all inputs, whatever their names.
   const connectorsFor = (side: "input" | "output", kind: LineKind) =>
-    all.filter((c) => c.kind === kind && (side === "input" ? /input/i : /output/i).test(c.name));
+    all.filter((c) => c.kind === kind && (spec.generator ? side === "input" : (side === "input" ? /input/i : /output/i).test(c.name)));
 
   const inputPorts = options.inputs ?? connectorsFor("input", "belt").map((c, i) => ({ label: `input ${i + 1}`, kind: "belt" as const }));
   const outputPorts = options.outputs ?? connectorsFor("output", "belt").slice(0, 1).map(() => ({ label: "output", kind: "belt" as const }));
-  if (inputPorts.length === 0 || outputPorts.length === 0) throw new Error(`${spec.key} needs at least one input and one output.`);
+  if (inputPorts.length === 0 || (outputPorts.length === 0 && !spec.generator)) throw new Error(`${spec.key} needs at least one input and one output.`);
 
   // Machines take any ingredient on any connector of the right kind, so assign them in order.
   const assign = (side: "input" | "output", ports: PortSpec[]) => {
@@ -230,9 +231,10 @@ export function prepareRow(options: MachineRowOptions): PreparedRow {
   const rowLength = (options.count - 1) * spec.pitch;
   const levels = Math.max(inputLines.length, outputLines.length) - 1;
   const inFace = inputLines[0].offset.y;
-  const outFace = outputLines[0].offset.y;
+  // A row without outputs (generators) ends at the machines' far side, mirrored from the input face.
+  const outFace = outputLines[0]?.offset.y ?? -inFace;
   const inLineY = inFace - (inputLines.length > 1 ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
-  const outLineY = outFace + (outputLines.length > 1 ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
+  const outLineY = outputLines.length === 0 ? outFace - ATTACHMENT_RADIUS : outFace + (outputLines.length > 1 ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
   const loopback = inputLines.some((l) => l.port.kind === "pipe") && options.count >= LOOPBACK_MIN_MACHINES ? LOOPBACK_OFFSET : 0;
   return {
     spec, options, inputLines, outputLines, required,
@@ -278,7 +280,7 @@ export function buildRow(b: BlueprintBuilder, row: PreparedRow, build: BuildRowO
   const ctx: RowContext = {
     b, machines, xOf,
     inFace: inputLines[0].offset.y,
-    outFace: outputLines[0].offset.y,
+    outFace: outputLines[0]?.offset.y ?? -inputLines[0].offset.y,
     inStacked: inputLines.length > 1,
     outStacked: outputLines.length > 1,
     fromEast: options.inputFrom === "east",

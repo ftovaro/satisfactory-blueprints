@@ -10,6 +10,8 @@ export interface Item {
   raw: boolean;
   /** Full asset path, filled in when a recipe references the item. */
   path: string;
+  /** Energy released when burned: MJ per item, or per m³ for fluids. */
+  energy?: number;
 }
 
 export interface Flow {
@@ -41,6 +43,18 @@ export interface Machine {
   shardSlots: number;
 }
 
+/** A power generator that burns fuel (Coal, Fuel-Powered, ...). Power and fuel use scale linearly with the clock. */
+export interface Generator {
+  className: string;
+  name: string;
+  /** MW at 100% clock. */
+  power: number;
+  /** Item classes it can burn. */
+  fuels: string[];
+  /** Item class it also needs (e.g. water for coal generators), if any. */
+  supplemental?: string;
+}
+
 export interface Transport {
   className: string;
   name: string;
@@ -54,6 +68,7 @@ export interface GameData {
   items: Record<string, Item>;
   recipes: Record<string, Recipe>;
   machines: Record<string, Machine>;
+  generators?: Record<string, Generator>;
   belts: Transport[];
   lifts: Transport[];
   pipes: Transport[];

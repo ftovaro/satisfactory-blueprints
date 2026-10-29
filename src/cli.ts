@@ -16,7 +16,7 @@ import { GAME_DATA_FILE, GameData, findItem, findRecipe as findGameRecipe, loadG
 import { findDocsFile, importGameData } from "./gamedata/import.js";
 import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
 import { MachineRowOptions, PortSpec, planLine } from "./generators/machine-row.js";
-import { generateFactory } from "./generators/factory.js";
+import { generateFactory, generatePowerPlant } from "./generators/factory.js";
 import { rowOptionsFor } from "./generators/row-options.js";
 import { Blueprint as BlueprintType } from "@etothepii/satisfactory-file-parser";
 import { formatPlan } from "./planner/format.js";
@@ -42,6 +42,11 @@ Commands:
                (--session <name> | --out-dir <path>) [--name <name>] [--force]
                               Generate a complete factory: every step stacked in floors, raw inputs
                               and the product at ground level
+  generate power-plant <MW> [--generator <name>] [--fuel <item>] [--net] [--recipe ...]...
+               (--session <name> | --out-dir <path>) [--name <name>] [--force]
+                              Generate a power plant: the fuel's production chain feeding generators
+                              (default: Fuel-Powered Generator burning Fuel). --net also covers the
+                              plant's own machines and pumps
   generate row --machine <constructor|smelter> (--count <n> | --rate <per min>) [--recipe <name>]
                [--belt <1-6>] [--pole <1-2>] (--session <name> | --out-dir <path>) [--name <name>] [--force]
                               Generate a row of machines with input/output manifolds and power.
@@ -216,8 +221,18 @@ function cmdGenerate(root: string, args: Args): void {
     const result = generateFactory(loadGameData(), { target, rate, recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole") });
     console.log(`${result.report}\n`);
     blueprint = result.blueprint;
+  } else if (kind === "power-plant") {
+    const megawatts = Number(args.positional[1]);
+    if (!(megawatts > 0)) throw new Error("Usage: sbp generate power-plant <MW> [--generator <name>] [--fuel <item>] [--net] (--session <name> | --out-dir <path>)");
+    const result = generatePowerPlant(loadGameData(), {
+      megawatts, generator: flag("generator") ?? "Fuel-Powered Generator", fuel: flag("fuel") ?? "Fuel", net: args.flags.net === true,
+      recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole"),
+    });
+    console.log(`${result.report}
+`);
+    blueprint = result.blueprint;
   } else {
-    throw new Error(`Unknown generator "${kind ?? ""}". Available: row, factory`);
+    throw new Error(`Unknown generator "${kind ?? ""}". Available: row, factory, power-plant`);
   }
 
   const fileName = blueprint.name.replace(/[<>:"/\\|?*]/g, "_");

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { GameData, Item, ItemForm, Machine, Recipe, Transport } from "./types.js";
+import { GameData, Item, ItemForm, Generator, Machine, Recipe, Transport } from "./types.js";
 
 /**
  * Imports game data from the Docs file that ships with Satisfactory
@@ -65,6 +65,8 @@ export function importGameData(docsFile: string): GameData {
         form: FORMS[c.mForm] ?? "solid",
         raw: group === "FGResourceDescriptor",
         path: "",
+        // mEnergyValue is MJ per item, or per liter for fluids.
+        ...(Number(c.mEnergyValue) > 0 ? { energy: Number(c.mEnergyValue) * (FORMS[c.mForm] && FORMS[c.mForm] !== "solid" ? 1000 : 1) } : {}),
       };
     }
   }
@@ -81,6 +83,18 @@ export function importGameData(docsFile: string): GameData {
         shardSlots: Number(c.mProductionShardSlotSize ?? 0),
       };
     }
+  }
+
+  const generators: Record<string, Generator> = {};
+  for (const c of classesOf("FGBuildableGeneratorFuel")) {
+    const fuels = (c.mFuel as unknown as { mFuelClass: string; mSupplementalResourceClass: string }[] | undefined) ?? [];
+    generators[c.ClassName] = {
+      className: c.ClassName,
+      name: c.mDisplayName,
+      power: Number(c.mPowerProduction),
+      fuels: fuels.map((f) => f.mFuelClass).filter((cls) => items[cls]),
+      ...(fuels[0]?.mSupplementalResourceClass ? { supplemental: fuels[0].mSupplementalResourceClass } : {}),
+    };
   }
 
   const recipes: Record<string, Recipe> = {};
@@ -117,6 +131,7 @@ export function importGameData(docsFile: string): GameData {
     items,
     recipes,
     machines,
+    generators,
     // Conveyor mSpeed / 2 gives items per minute (60, 120, 270, 480, 780, 1200 as shown in-game).
     belts: transport("FGBuildableConveyorBelt", "belt", (c) => Number(c.mSpeed) / 2),
     lifts: transport("FGBuildableConveyorLift", "lift", (c) => Number(c.mSpeed) / 2),

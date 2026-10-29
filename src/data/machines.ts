@@ -10,6 +10,8 @@ export interface MachineSpec {
   /** Building height (cm), from the wiki; decides how tall a factory floor must be. */
   height: number;
   recipes: Record<string, string>;
+  /** Power generators burn what their connectors take in and have no outputs. */
+  generator?: boolean;
 }
 
 const recipe = (folder: string, name: string) => `/Game/FactoryGame/Recipes/${folder}/Recipe_${name}.Recipe_${name}_C`;
@@ -40,6 +42,8 @@ export const MACHINES: Record<string, MachineSpec> = {
   refinery: { key: "refinery", type: "Build_OilRefinery_C", pitch: 1200, height: 3000, recipes: {} },
   blender: { key: "blender", type: "Build_Blender_C", pitch: 2000, height: 1600, recipes: {} },
   packager: { key: "packager", type: "Build_Packager_C", pitch: 1000, height: 800, recipes: {} },
+  // Power generators: 20 m x 20 m (real blueprints place them 20 m apart); the pitch leaves room for a pole.
+  "fuel generator": { key: "fuel generator", type: "Build_GeneratorFuel_C", pitch: 2100, height: 2700, recipes: {}, generator: true },
 };
 
 export function findMachine(key: string): MachineSpec {

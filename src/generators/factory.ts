@@ -1,8 +1,10 @@
 import { Blueprint } from "@etothepii/satisfactory-file-parser";
 import { BeltEnd, BlueprintBuilder, ConnectorRef, Placed } from "../builder.js";
 import { Vec3, add, transform, vec } from "../geometry.js";
-import { GameData, pickTier } from "../gamedata/index.js";
-import { PlanOptions, Step, fmt, plan } from "../planner/plan.js";
+import { GameData, findItem, pickTier } from "../gamedata/index.js";
+import { Generator, Item } from "../gamedata/types.js";
+import { PlanOptions, Step, fmt, machineClocks, plan } from "../planner/plan.js";
+import { MACHINES } from "../data/machines.js";
 import { CELL, DIRS, Dir, Grid, LEVEL, Route, Start, Step as GridStep, perpendicular } from "../layout/grid.js";
 import { Branch, buildRoute } from "../layout/route-builder.js";
 import { BuiltRow, LineKind, PreparedRow, beltType, buildRow, libraryFor, liftType, pipeType, prepareRow } from "./machine-row.js";
@@ -39,7 +41,23 @@ export interface FactoryOptions extends PlanOptions {
   rate: number;
   name?: string;
   pole?: number;
+  /** Burn the target in generators instead of exporting it (a power plant). */
+  power?: { generator: Generator; fuel: Item; megawatts: number; fuelPerGenerator: number };
 }
+
+export interface PowerPlantOptions extends PlanOptions {
+  /** Generator name or class, e.g. "Fuel-Powered Generator". */
+  generator: string;
+  fuel: string;
+  megawatts: number;
+  /** Count the plant's own use (machines, pumps) so `megawatts` is what it delivers. */
+  net?: boolean;
+  name?: string;
+  pole?: number;
+}
+
+/** Pipeline Pump Mk1 power (game Docs). */
+const PUMP_MW = 4;
 
 const FOUNDATION = 800;
 const FOUNDATION_TYPE = "Build_Foundation_Concrete_8x1_C";
@@ -130,6 +148,40 @@ interface RoutedLine {
   children: RoutedLine[];
 }
 
+/**
+ * A power plant: the fuel's production chain feeding a row of generators, all in one building.
+ * Generators run at 100% except the last one. With `net`, the plant also covers its own machines
+ * and pumps (found by laying it out, then again with the pumps it needed).
+ */
+export function generatePowerPlant(data: GameData, options: PowerPlantOptions): { blueprint: Blueprint; report: string } {
+  const query = options.generator.toLowerCase();
+  const generator = Object.values(data.generators ?? {}).find((g) => g.className === options.generator || g.name.toLowerCase().startsWith(query));
+  if (!generator) throw new Error(`Unknown generator "${options.generator}". Known: ${Object.values(data.generators ?? {}).map((g) => g.name).join(", ")}. Run "sbp import-game-data" if none are listed.`);
+  const fuel = findItem(data, options.fuel);
+  if (!generator.fuels.includes(fuel.className) || !fuel.energy) throw new Error(`${generator.name} does not burn ${fuel.name}.`);
+  if (fuel.form === "solid") throw new Error("Only fluid fuels are supported for now.");
+  const fuelPerGenerator = (generator.power * 60) / fuel.energy;
+  const fuelFor = (megawatts: number) => (megawatts / generator.power) * fuelPerGenerator;
+  let pumps = 0;
+  for (let pass = 0; ; pass++) {
+    let gross = options.megawatts;
+    if (options.net) {
+      for (let i = 0; i < 20; i++) {
+        const own = plan(data, fuel.className, fuelFor(gross), options).steps.reduce((sum, step) => sum + step.power, 0);
+        gross = options.megawatts + own + pumps * PUMP_MW;
+      }
+    }
+    const result = generateFactory(data, {
+      ...options, target: fuel.className, rate: fuelFor(gross),
+      name: options.name ?? `${fuel.name} Power Plant ${fmt(options.megawatts)} MW${options.net ? " net" : ""}`,
+      power: { generator, fuel, megawatts: gross, fuelPerGenerator },
+    });
+    const used = result.blueprint.objects.filter((o) => /Build_PipelinePump_C$/.test(o.typePath) && "transform" in o).length;
+    if (!options.net || used <= pumps || pass >= 2) return result;
+    pumps = used;
+  }
+}
+
 export function generateFactory(data: GameData, options: FactoryOptions): { blueprint: Blueprint; report: string } {
   for (const margins of MARGINS) {
     try {
@@ -175,6 +227,31 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     const recipe = { ...step.recipe, outputs: [...step.recipe.outputs].sort((a) => (a.item === step.product.className ? -1 : 1)) };
     return { step, row: prepareRow({ ...rowOptionsFor(data, recipe, rate), inputFrom: "east", pole: options.pole }), floor: floorOf(step), x: 0, y: 0 };
   });
+  // Power plant: a row of generators burning the target.
+  const power = options.power;
+  if (power) {
+    const spec = Object.values(MACHINES).find((m) => m.type === power.generator.className);
+    if (!spec) throw new Error(`No layout for ${power.generator.name} yet.`);
+    const clocks = machineClocks(power.megawatts, power.generator.power);
+    const step: Step = {
+      recipe: { className: "", name: power.generator.name, path: "", alternate: false, machine: power.generator.className, duration: 60, inputs: [{ item: power.fuel.className, amount: options.rate }], outputs: [] },
+      product: power.fuel, clocks, productPerMachine: 0, inputs: [{ item: power.fuel, perMinute: options.rate }], outputs: [], power: -power.megawatts,
+    };
+    rows.push({
+      step, floor: floorOf(step), x: 0, y: 0,
+      row: prepareRow({
+        machine: spec.key, count: clocks.length, clocks, inputFrom: "east", pole: options.pole, outputs: [],
+        inputs: [{ label: power.fuel.name, kind: kindOf(power.fuel.className), perMachine: clocks.map((c) => c * power.fuelPerGenerator) }],
+        speeds: { belt: data.belts.map((t) => t.perMinute), pipe: data.pipes.map((t) => t.perMinute) },
+      }),
+    });
+  }
+  // What a row's sign and the report say it makes.
+  const rowText = (r: PlacedRow) => {
+    if (r.row.spec.generator) return `${power!.generator.name}: ${fmt(-r.step.power)} MW`;
+    const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
+    return `${r.step.product.name}: ${fmt(rate)}${r.step.product.form === "solid" ? "/min" : " m³/min"}`;
+  };
   const rowOfStep = new Map(rows.map((r) => [r.step, r]));
   const floors = Array.from({ length: Math.max(...rows.map((r) => r.floor)) + 1 }, (_, f) => rows.filter((r) => r.floor === f));
 
@@ -242,7 +319,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
       flow.sinks.push({ row: r, inputIndex, perMinute: input.perMinute });
     });
   }
-  for (const e of [{ item: production.target.item.className, perMinute: options.rate }, ...production.byproducts.map((p) => ({ item: p.item.className, perMinute: p.perMinute }))]) {
+  for (const e of [...(power ? [] : [{ item: production.target.item.className, perMinute: options.rate }]), ...production.byproducts.map((p) => ({ item: p.item.className, perMinute: p.perMinute }))]) {
     const flow = newFlow(e.item, true);
     flow.perMinute = e.perMinute;
     flow.sinks.push({ perMinute: e.perMinute });
@@ -522,10 +599,9 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   for (const r of rows) {
     const e = extentOf(r);
     const levels = Math.max(r.row.inputLines.length, r.row.outputLines.length) - 1;
-    const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
     b.sign(vec(origin.x - CELL / 2 + SIGN_OFF_WALL, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 0, {
       type: SMALL_SIGN,
-      texts: { Name: `${r.step.product.name.toUpperCase()} ${fmt(rate)}/min` },
+      texts: { Name: rowText(r).replace(":", "").toUpperCase() },
       icon: iconFor(r.step.product.name),
       text: ROW_COLOR,
       background: SIGN_BACKGROUND,
@@ -632,7 +708,8 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     b.wire({ building: last.pole, name: b.powerConnector(last.pole), position: last.position }, { building: pumpPoles[0].pole, name: b.powerConnector(pumpPoles[0].pole), position: pumpPoles[0].position });
   }
 
-  const productName = production.target.item.name;
+  const productName = power ? `${fmt(power.megawatts)} MW ${power.generator.name} plant` : production.target.item.name;
+  const netText = power ? ` Plant use ${fmt(production.steps.reduce((s, st) => s + st.power, 0))} MW + pumps.` : "";
   const unit = (f: Flow) => (f.kind === "belt" ? "/min" : " m³/min");
   const carrier = (f: Flow) => `${f.kind} Mk${tierFor(f.kind, f.perMinute)}`;
   const rawFlows = flows.filter((f) => !f.source);
@@ -640,8 +717,10 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   const rawText = rawFlows.map((f) => `${fmt(f.perMinute)}${unit(f)} ${f.label} (${carrier(f)})`).join(", ");
   const outText = exported.map((f) => `${fmt(f.perMinute)}${unit(f)} ${f.label} (${carrier(f)})`).join(", ");
   const half = Math.ceil(Math.max(-envelope.minX, envelope.maxX, -envelope.minY, envelope.maxY) / FOUNDATION) * FOUNDATION;
-  const blueprint = b.build(options.name ?? `Factory ${fmt(options.rate)} ${productName}`, {
-    description: `Complete factory: ${fmt(options.rate)}/min ${productName} in ${floors.length} floor(s). `
+  const blueprint = b.build(options.name ?? (power ? `Power Plant ${fmt(power.megawatts)} MW` : `Factory ${fmt(options.rate)} ${productName}`), {
+    description: (power
+      ? `Power plant: ${rows[rows.length - 1].row.options.count}x ${power.generator.name} burning ${fmt(options.rate)} m³/min ${power.fuel.name} = ${fmt(power.megawatts)} MW.${netText} `
+      : `Complete factory: ${fmt(options.rate)}/min ${productName} in ${floors.length} floor(s). `)
       + `Inputs at ground level on the back edge, one each: ${rawText}. Outputs at ground level on the front edge: ${outText}. Power: connect any pole.`,
     designerSize: (half * 2) / FOUNDATION,
     yaw: FLOW_TO_FRONT_YAW,
@@ -649,11 +728,10 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
 
   const pumps = blueprint.objects.filter((o) => /Build_PipelinePump_C$/.test(o.typePath) && "transform" in o).length;
   const report = [
-    `${productName}: ${fmt(options.rate)}/min in ${floors.length} floor(s), ${rows.reduce((n, r) => n + r.row.options.count, 0)} machines${pumps ? `, ${pumps} pump(s)` : ""}, building ${fmt((envelope.maxX - envelope.minX) / 100)} x ${fmt((envelope.maxY - envelope.minY) / 100)} x ${fmt(roofZ / 100)} m`,
+    `${productName}${power ? ` (${fmt(options.rate)} m³/min ${power.fuel.name}.${netText})` : `: ${fmt(options.rate)}/min`} in ${floors.length} floor(s), ${rows.reduce((n, r) => n + r.row.options.count, 0)} machines${pumps ? `, ${pumps} pump(s)` : ""}, building ${fmt((envelope.maxX - envelope.minX) / 100)} x ${fmt((envelope.maxY - envelope.minY) / 100)} x ${fmt(roofZ / 100)} m`,
     ...floors.map((floor, f) => `  floor ${f} (${fmt(floorZ[f] / 100)} m): ` + floor.map((r) => {
       const partial = (r.row.options.clocks ?? []).filter((c) => Math.abs(c - 1) > 1e-6).map((c) => `${fmt(c * 100)}%`);
-      const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
-      return `${r.row.options.count}x ${r.row.spec.key} -> ${fmt(rate)}/min ${r.step.product.name}${partial.length ? ` (last at ${partial.join(", ")})` : ""}`;
+      return `${r.row.options.count}x ${r.row.spec.key} -> ${rowText(r).replace(/^(.*): (.*)$/, r.row.spec.generator ? "$2" : "$2 $1")}${partial.length ? ` (last at ${partial.join(", ")})` : ""}`;
     }).join(" | ")),
     `  inputs (back edge, ground level): ${rawText}`,
     `  outputs (front edge, ground level): ${outText}`,
