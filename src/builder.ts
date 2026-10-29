@@ -207,16 +207,27 @@ export class BlueprintBuilder {
    * about every meter. Either end may be left open (a port for Auto-Connect).
    */
   pipe(type: string, from: BeltEnd, to: BeltEnd, direction: Vec3): Placed {
+    const horizontal = Math.hypot(to.position.x - from.position.x, to.position.y - from.position.y);
+    const along = Math.abs(direction.z) > 0.5 ? Math.abs(to.position.z - from.position.z) : horizontal;
+    return this.pipeCurve(type, from, to, direction, direction, Math.max(along, 100));
+  }
+
+  /**
+   * Places a pipeline leaving `from` along `startDir` and arriving at `to` along `endDir`, as a cubic
+   * Hermite curve with tangents of `tangent` cm (1.657 r gives a circular quarter turn of radius r).
+   * Like the game, the spline gets a point about every meter.
+   */
+  pipeCurve(type: string, from: BeltEnd, to: BeltEnd, startDir: Vec3, endDir: Vec3, tangent: number): Placed {
     const start = this.toBlueprint(from.position);
     const pipe = this.instantiate(type, transform(start));
     const delta = sub(this.toBlueprint(to.position), start);
-    const horizontal = Math.hypot(delta.x, delta.y);
-    const t0 = scale(this.toBlueprintDirection(direction), Math.max(horizontal, 100));
-    const segments = Math.max(1, Math.ceil(length(delta) / 100));
-    // Cubic Hermite from the origin to `delta`, with tangent t0 at both ends (the start point is 0).
-    const combine = (a: number, b: number) => add(scale(t0, a), scale(delta, b));
-    const at = (s: number) => combine(s ** 3 - 2 * s ** 2 + s + (s ** 3 - s ** 2), -2 * s ** 3 + 3 * s ** 2);
-    const slope = (s: number) => combine(3 * s ** 2 - 4 * s + 1 + (3 * s ** 2 - 2 * s), -6 * s ** 2 + 6 * s);
+    const t0 = scale(this.toBlueprintDirection(startDir), tangent);
+    const t1 = scale(this.toBlueprintDirection(endDir), tangent);
+    const segments = Math.max(1, Math.ceil((length(delta) * 1.2) / 100));
+    // Cubic Hermite from the origin (tangent t0) to `delta` (tangent t1).
+    const combine = (a: number, b: number, c: number) => add(add(scale(t0, a), scale(delta, b)), scale(t1, c));
+    const at = (s: number) => combine(s ** 3 - 2 * s ** 2 + s, -2 * s ** 3 + 3 * s ** 2, s ** 3 - s ** 2);
+    const slope = (s: number) => combine(3 * s ** 2 - 4 * s + 1, -6 * s ** 2 + 6 * s, 3 * s ** 2 - 2 * s);
     (pipe.entity.properties as any).mSplineData.values = Array.from({ length: segments + 1 }, (_, i) => {
       const s = i / segments;
       return this.splinePoint(pipe, at(s), scale(slope(s), 1 / segments));
@@ -252,8 +263,10 @@ export class BlueprintBuilder {
     if (props.mCachedLength) props.mCachedLength.value = length(sub(b.position, a.position));
 
     for (const c of [ca, cb]) {
-      const wires = (c.properties as any).mWires;
-      if (wires) wires.values.push(objectRef(line.entity.instanceName));
+      // Templates copied from unwired buildings have no mWires list yet; create it.
+      const props = c.properties as any;
+      props.mWires ??= { type: "ArrayProperty", name: "mWires", propertyTagType: { name: "ArrayProperty", children: [{ name: "ObjectProperty", children: [] }] }, values: [] };
+      props.mWires.values.push(objectRef(line.entity.instanceName));
     }
     return line;
   }

@@ -22,7 +22,9 @@ const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 export function findItem(data: GameData, query: string): Item {
   const q = normalize(query);
   const all = Object.values(data.items);
-  const exact = all.find((i) => normalize(i.name) === q || normalize(i.className) === q || normalize(i.className.replace(/^Desc_|_C$/g, "")) === q);
+  // Display names win over class names: "Desc_Fuel_C" is Packaged Fuel, the liquid is "Desc_LiquidFuel_C".
+  const exact = all.find((i) => normalize(i.name) === q)
+    ?? all.find((i) => normalize(i.className) === q || normalize(i.className.replace(/^Desc_|_C$/g, "")) === q);
   if (exact) return exact;
   const partial = all.filter((i) => normalize(i.name).includes(q));
   if (partial.length === 1) return partial[0];
@@ -30,12 +32,20 @@ export function findItem(data: GameData, query: string): Item {
   throw new Error(`Unknown item "${query}".${hint}`);
 }
 
-/** Recipes that produce an item, standard ones first. Packaging/unpackaging recipes are excluded. */
+/**
+ * Recipes that produce an item: standard ones first, and among those the one named like the item
+ * (the game's main recipe, e.g. "Rubber" before "Residual Rubber"). Packaging/unpackaging recipes
+ * are excluded.
+ */
 export function recipesFor(data: GameData, itemClass: string): Recipe[] {
+  const itemName = normalize(data.items[itemClass]?.name ?? "");
+  const named = (r: Recipe) => (normalize(r.name.replace(/^Alternate:\s*/, "")) === itemName ? 0 : 1);
+  // Recipes that make the item as a byproduct (e.g. Rocket Fuel -> Compacted Coal) come last.
+  const primary = (r: Recipe) => (r.outputs[0].item === itemClass ? 0 : 1);
   return Object.values(data.recipes)
     .filter((r) => r.outputs.some((o) => o.item === itemClass))
     .filter((r) => !/^Recipe_(Un)?[Pp]ackage/.test(r.className))
-    .sort((a, b) => Number(a.alternate) - Number(b.alternate) || a.name.localeCompare(b.name));
+    .sort((a, b) => primary(a) - primary(b) || Number(a.alternate) - Number(b.alternate) || named(a) - named(b) || a.name.localeCompare(b.name));
 }
 
 /** Finds a recipe by display name ("Alternate: Steel Screws"), class name or short name ("Alternate_Screw_2"). */

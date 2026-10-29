@@ -90,18 +90,19 @@ npm run sbp -- generate factory "Steel Beam" 15 --recipe "Steel Ingot=Solid Stee
 
 The whole production chain goes into one blueprint, built upward:
 
-- **Floors:** each step is a machine row (same manifolds as `generate row`). Steps fed only by raw materials are on the ground floor, and every other step sits one floor above its highest ingredient step. Floors are 1 m concrete foundation slabs.
-- **Connections between steps:** they run outside the slabs at two corners. Each one is a belt with 90° turns and a Conveyor Lift (several chained lifts for climbs over 48 m).
-- **Inputs and output:** raw materials enter at ground level through open belt ends, and the final product comes down to ground level and leaves through another. Use Auto-Connect (R) to hook them up.
-- **Power:** all rows share one grid; connect any pole.
-- **Shared intermediates:** an intermediate needed by two steps gets its own machine group for each, so currently a raw material can need more than one input belt.
+- **Steps and floors:** one machine row per product (same manifolds as `generate row`), shared by every step that uses it. Steps fed only by raw materials are on the ground floor and every other step sits one floor above its highest solid ingredient. A step fed a fluid by another step stays on that step's floor when it can, so fluids rarely climb. Floors are 1 m concrete foundation slabs.
+- **One input per raw material, one output per product:** each raw material enters through a single open belt or pipe end at ground level. The final product, and any byproduct nothing inside uses (e.g. Heavy Oil Residue), each come down to ground level and leave through their own. Use Auto-Connect (R) to hook them up.
+- **Connections between steps:** all rows meet the outside at the same end, so every connection lives on one side of the building. Each flow has a line of splitters (junctions for fluids) with one branch per consumer, and each branch climbs to its consumer's floor in its own lane. Belts climb with Conveyor Lifts (chained above 48 m). Pipes climb vertically with a Pipeline Pump every 17 m when the fluid is a liquid; the pumps are powered from a pole in their lane.
+- **Avoiding clashes:** the lane order is chosen by search, and any belt that would still cross another runs 2 m higher there.
+- **Power:** all rows and pumps share one grid; connect any pole.
 - **Size:** large factories exceed the Blueprint Designer. The game still places them, but they cannot be edited in a designer.
+- **Not supported yet:** byproducts that are only partly used inside the factory (e.g. Silica in Aluminum production), because their surplus would need a Smart Splitter on overflow.
 
 Every generated blueprint is checked automatically (`sbp check` runs the same checks on any blueprint):
 - links stored on both sides;
 - belt ends exactly on their connectors;
 - belts entering lifts the right way;
-- no belts or lifts clipping each other;
+- no belts, lifts or pipes clipping each other;
 - pole connection limits;
 - every machine powered.
 
@@ -159,7 +160,7 @@ Buildings:
 3. ~~Generate simple modules (a row of machines with input/output manifolds and power)~~ (verified in-game)
 4. ~~Recipe and ratio planner from the game's own data~~
 5. ~~Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts~~ (verified in-game)
-6. ~~Full production lines stacked in floors~~ (in-game testing pending; next: one input belt per raw material, fluid steps)
+6. ~~Full production lines stacked in floors, one input per raw material, fluids with pumps~~ (in-game testing pending)
 7. Building shells, colors and signs
 
 ## Safety notes

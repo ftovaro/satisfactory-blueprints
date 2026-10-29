@@ -37,6 +37,7 @@ export function checkBlueprint(blueprint: Blueprint): CheckResult {
   const entities = blueprint.objects.filter(isSaveEntity) as any[];
   const isBelt = (e: SaveEntity) => /ConveyorBelt/.test(e.typePath);
   const isLift = (e: SaveEntity) => /ConveyorLift/.test(e.typePath);
+  const isPipe = (e: SaveEntity) => /Build_Pipeline(MK2)?(_NoIndicator)?_C$/.test(e.typePath);
 
   /** Position of a connector, plus the travel direction for spline ends. */
   const connectorAt = (component: string): { position: Vec3; travel?: Vec3 } | undefined => {
@@ -107,14 +108,18 @@ export function checkBlueprint(blueprint: Blueprint): CheckResult {
   const samples: Sample[] = [];
   const related = new Map<string, Set<string>>();
   for (const e of entities) {
-    if (!isBelt(e) && !isLift(e)) continue;
+    if (!isBelt(e) && !isLift(e) && !isPipe(e)) continue;
     const set = new Set<string>([e.instanceName]);
     for (const ref of e.components ?? []) {
       const t = linkOf(ref.pathName);
       if (t) set.add(t.slice(0, t.lastIndexOf(".")));
     }
     related.set(e.instanceName, set);
-    if (isBelt(e)) {
+    if (isPipe(e)) {
+      // Pipes are stored with a point about every meter; their points are good samples as they are.
+      const s = readSpline(e)!;
+      for (let i = 1; i < s.length - 1; i++) samples.push({ id: e.instanceName, p: toWorld(e.transform, s[i].location) });
+    } else if (isBelt(e)) {
       const s = readSpline(e)!;
       const [p0, p1, t0, t1] = [s[0].location, s[s.length - 1].location, s[0].leave, s[s.length - 1].arrive];
       for (let i = 1; i < 20; i++) {

@@ -81,8 +81,13 @@ export function plan(data: GameData, targetQuery: string, rate: number, options:
   const recipeFor = (cls: string): Recipe => {
     const existing = chosen.get(cls);
     if (existing) return existing;
-    const candidates = recipesFor(data, cls).filter((r) => !r.alternate);
-    if (candidates.length === 0) throw new Error(`No standard recipe produces ${data.items[cls]?.name ?? cls}. Pick one with --recipe or mark it as an input.`);
+    // Standard recipes first; some items (e.g. Turbofuel) only have recipes the game files mark as alternates.
+    const all = recipesFor(data, cls);
+    const primary = all.filter((r) => r.outputs[0].item === cls);
+    const pool = primary.length > 0 ? primary : all;
+    const candidates = pool.some((r) => !r.alternate) ? pool.filter((r) => !r.alternate) : pool;
+    if (candidates.length === 0) throw new Error(`No recipe produces ${data.items[cls]?.name ?? cls}. Mark it as an input.`);
+    if (candidates[0].alternate) warnings.push(`${data.items[cls].name} has no standard recipe; using "${candidates[0].name}".`);
     chosen.set(cls, candidates[0]);
     return candidates[0];
   };

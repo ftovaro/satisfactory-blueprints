@@ -206,7 +206,6 @@ export function prepareRow(options: MachineRowOptions): PreparedRow {
   };
   const toLines = (side: "input" | "output", list: { port: PortSpec; connector: ConnectorStats }[]): Line[] =>
     [...list].sort(order(side)).map((l, level) => ({ ...l, offset: local(l.connector), level, tiers: tiersFor(side, l.port) }));
-  if (fromEast && inputs.some((i) => i.port.kind === "pipe")) throw new Error(`${spec.key}: pipe inputs fed from the east are not supported yet.`);
   const inputLines = toLines("input", inputs);
   const outputLines = toLines("output", outputs);
   if (outputLines.some((l) => l.port.kind === "belt" && l.level > 0)) throw new Error(`${spec.key}: more than one belt output is not supported.`);
@@ -455,30 +454,41 @@ function pipeInputLine(ctx: RowContext, line: Line): Port {
       vec(0, 1, 0));
     return { junction, center };
   });
-  const chain = (from: { junction: Placed; center: Vec3 }, to: { junction: Placed; center: Vec3 }, tier: number) =>
+  // Fluid enters at the upstream end (west by default, east when fed from the east) and spreads
+  // downstream: each junction passes it on through its downstream side.
+  type J = { junction: Placed; center: Vec3 };
+  type Side = "Connection0" | "Connection1";
+  const upSide: Side = ctx.fromEast ? "Connection1" : "Connection0";
+  const downSide: Side = ctx.fromEast ? "Connection0" : "Connection1";
+  const downstream = ctx.fromEast ? vec(-1, 0, 0) : along;
+  const ordered = ctx.fromEast ? [...junctions].reverse() : junctions;
+  const segmentTier = (i: number) => tiers.chain[ctx.fromEast ? junctions.length - 2 - i : i];
+  const chain = (from: J, to: J, tier: number) =>
     b.pipe(pipeType(tier),
-      { building: from.junction, name: "Connection1", position: junctionPoint(from.center, "Connection1") },
-      { building: to.junction, name: "Connection0", position: junctionPoint(to.center, "Connection0") }, along);
-  for (let i = 1; i < junctions.length; i++) chain(junctions[i - 1], junctions[i], tiers.chain[i - 1]);
+      { building: from.junction, name: downSide, position: junctionPoint(from.center, downSide) },
+      { building: to.junction, name: upSide, position: junctionPoint(to.center, upSide) }, downstream);
+  for (let i = 1; i < ordered.length; i++) chain(ordered[i - 1], ordered[i], segmentTier(i - 1));
 
-  let entry = junctions[0];
+  let entry = ordered[0];
   if (machines.length >= LOOPBACK_MIN_MACHINES) {
     // feed -> start junction -> manifold -> end junction, plus start -> corner -> corner -> end outside the row.
     const place = (center: Vec3) => ({ junction: b.place(JUNCTION, transform(center)), center });
-    const start = place(vec(junctions[0].center.x - LOOPBACK_OFFSET, lineY, lineZ));
-    const end = place(vec(junctions[junctions.length - 1].center.x + LOOPBACK_OFFSET, lineY, lineZ));
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+    const start = place(vec(first.center.x - downstream.x * LOOPBACK_OFFSET, lineY, lineZ));
+    const end = place(vec(last.center.x + downstream.x * LOOPBACK_OFFSET, lineY, lineZ));
     const cornerA = place(vec(start.center.x, lineY - LOOPBACK_OFFSET, lineZ));
     const cornerB = place(vec(end.center.x, lineY - LOOPBACK_OFFSET, lineZ));
-    chain(start, junctions[0], tiers.end);
-    chain(junctions[junctions.length - 1], end, tiers.feeders[tiers.feeders.length - 1]);
-    const link = (a: { junction: Placed; center: Vec3 }, aName: "Connection1" | "Connection2" | "Connection3", z: { junction: Placed; center: Vec3 }, zName: "Connection0" | "Connection2" | "Connection3", dir: Vec3) =>
-      b.pipe(pipeType(tiers.end), { building: a.junction, name: aName, position: junctionPoint(a.center, aName) }, { building: z.junction, name: zName, position: junctionPoint(z.center, zName) }, dir);
+    chain(start, first, tiers.end);
+    chain(last, end, tiers.feeders[ctx.fromEast ? 0 : tiers.feeders.length - 1]);
+    const link = (a: J, aName: string, z: J, zName: string, dir: Vec3) =>
+      b.pipe(pipeType(tiers.end), { building: a.junction, name: aName, position: junctionPoint(a.center, aName as any) }, { building: z.junction, name: zName, position: junctionPoint(z.center, zName as any) }, dir);
     link(start, "Connection3", cornerA, "Connection2", vec(0, -1, 0));
-    link(cornerA, "Connection1", cornerB, "Connection0", along);
+    link(cornerA, downSide, cornerB, upSide, downstream);
     link(cornerB, "Connection2", end, "Connection3", vec(0, 1, 0));
     entry = start;
   }
-  return { side: "input", kind: "pipe", tier: tiers.end, point: { building: entry.junction, name: "Connection0", position: junctionPoint(entry.center, "Connection0") } };
+  return { side: "input", kind: "pipe", tier: tiers.end, point: { building: entry.junction, name: upSide, position: junctionPoint(entry.center, upSide) } };
 }
 
 /** Pipe manifold collecting from the machines; upper levels rise from the machine (machines push 10 m of head lift). */
