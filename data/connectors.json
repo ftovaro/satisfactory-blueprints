@@ -1,0 +1,1260 @@
+{
+  "/Game/FactoryGame/Buildable/Factory/AssemblerMk1/Build_AssemblerMk1.Build_AssemblerMk1_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 200,
+        "y": -600,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 63,
+      "spread": 0
+    },
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": -200,
+        "y": -600,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 48,
+      "spread": 0
+    },
+    {
+      "name": "Output0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 500,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 67,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/Blender/Build_Blender.Build_Blender_C": [
+    {
+      "name": "PipeInputFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": -200,
+        "y": -700,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 18,
+      "spread": 2
+    },
+    {
+      "name": "PipeInputFactory1",
+      "kind": "pipe",
+      "offset": {
+        "x": -600,
+        "y": -700,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 18,
+      "spread": 2
+    },
+    {
+      "name": "PipeOutputFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": -600,
+        "y": 740,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 18,
+      "spread": 2
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/CA_Merger/Build_ConveyorAttachmentMerger.Build_ConveyorAttachmentMerger_C": [
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": -100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 623,
+      "spread": 100
+    },
+    {
+      "name": "Input2",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 251,
+      "spread": 0
+    },
+    {
+      "name": "Input3",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 98,
+      "spread": 0
+    },
+    {
+      "name": "InPut3",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 156,
+      "spread": 50
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 797,
+      "spread": 300
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/CA_Splitter/Build_ConveyorAttachmentSplitter.Build_ConveyorAttachmentSplitter_C": [
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": -100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 968,
+      "spread": 300
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 742,
+      "spread": 100
+    },
+    {
+      "name": "Output2",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 335,
+      "spread": 300
+    },
+    {
+      "name": "Output3",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 413,
+      "spread": 300
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/CA_SplitterSmart/Build_ConveyorAttachmentSplitterSmart.Build_ConveyorAttachmentSplitterSmart_C": [
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": -100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 51,
+      "spread": 100
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 35,
+      "spread": 100
+    },
+    {
+      "name": "Output2",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 24,
+      "spread": 0
+    },
+    {
+      "name": "Output3",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 22,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/CentralStorage/Build_CentralStorage.Build_CentralStorage_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 390,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 2,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ConstructorMk1/Build_ConstructorMk1.Build_ConstructorMk1_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -300,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 204,
+      "spread": 0.1
+    },
+    {
+      "name": "Output0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 300,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 256,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk1/Build_ConveyorLiftMk1.Build_ConveyorLiftMk1_C": [
+    {
+      "name": "ConveyorAny0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": -400
+      },
+      "normal": {
+        "x": 0.991,
+        "y": -0.131,
+        "z": 0
+      },
+      "samples": 203,
+      "spread": 2600
+    },
+    {
+      "name": "ConveyorAny1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 0.999,
+        "y": 0.034,
+        "z": 0
+      },
+      "samples": 58,
+      "spread": 1400
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk2/Build_ConveyorLiftMk2.Build_ConveyorLiftMk2_C": [
+    {
+      "name": "ConveyorAny0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 84,
+      "spread": 900
+    },
+    {
+      "name": "ConveyorAny1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 400
+      },
+      "normal": {
+        "x": -0.991,
+        "y": 0.136,
+        "z": 0
+      },
+      "samples": 71,
+      "spread": 1200
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk3/Build_ConveyorLiftMk3.Build_ConveyorLiftMk3_C": [
+    {
+      "name": "ConveyorAny0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 150
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 129,
+      "spread": 2350
+    },
+    {
+      "name": "ConveyorAny1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 120,
+      "spread": 1900
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk4/Build_ConveyorLiftMk4.Build_ConveyorLiftMk4_C": [
+    {
+      "name": "ConveyorAny0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": -250
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 69,
+      "spread": 1050
+    },
+    {
+      "name": "ConveyorAny1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": -200
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 53,
+      "spread": 1400
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk5/Build_ConveyorLiftMk5.Build_ConveyorLiftMk5_C": [
+    {
+      "name": "ConveyorAny0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 1200
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 13,
+      "spread": 1200
+    },
+    {
+      "name": "ConveyorAny1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 174.9
+      },
+      "normal": {
+        "x": 1,
+        "y": -0.003,
+        "z": 0
+      },
+      "samples": 18,
+      "spread": 2174.9
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/FoundryMk1/Build_FoundryMk1.Build_FoundryMk1_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 200,
+        "y": -300,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 18,
+      "spread": 0
+    },
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": -200,
+        "y": -300,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 5,
+      "spread": 0
+    },
+    {
+      "name": "Output2",
+      "kind": "belt",
+      "offset": {
+        "x": -200,
+        "y": 200,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 24,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/GeneratorCoal/Build_GeneratorCoal.Build_GeneratorCoal_C": [
+    {
+      "name": "FGPipeConnectionFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": -200,
+        "y": 941.7,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 156,
+      "spread": 200
+    },
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 200,
+        "y": 1100,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 12,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/GeneratorFuel/Build_GeneratorFuel.Build_GeneratorFuel_C": [
+    {
+      "name": "FGPipeConnectionFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": -860.2,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 154,
+      "spread": 2
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/IndustrialFluidContainer/Build_IndustrialTank.Build_IndustrialTank_C": [
+    {
+      "name": "ConnectionAny0",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 600,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 4,
+      "spread": 0
+    },
+    {
+      "name": "ConnectionAny1",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": -600,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 4,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ManufacturerMk1/Build_ManufacturerMk1.Build_ManufacturerMk1_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 600,
+        "y": -875,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 25,
+      "spread": 0
+    },
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": 200,
+        "y": -875,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 27,
+      "spread": 0
+    },
+    {
+      "name": "Input2",
+      "kind": "belt",
+      "offset": {
+        "x": -200,
+        "y": -875,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 7,
+      "spread": 0
+    },
+    {
+      "name": "Input3",
+      "kind": "belt",
+      "offset": {
+        "x": -600,
+        "y": -875,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 20,
+      "spread": 0
+    },
+    {
+      "name": "Output0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 800,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 11,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/OilRefinery/Build_OilRefinery.Build_OilRefinery_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 200,
+        "y": 900,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 63,
+      "spread": 0
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 200,
+        "y": -900,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 77,
+      "spread": 2.8000000000000003
+    },
+    {
+      "name": "PipeInputFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": -200,
+        "y": 900,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 180,
+      "spread": 2.8000000000000003
+    },
+    {
+      "name": "PipeOutputFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": -200,
+        "y": -900,
+        "z": 175
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 99,
+      "spread": 2.8000000000000003
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/Packager/Build_Packager.Build_Packager_C": [
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 300,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 1,
+      "spread": 0
+    },
+    {
+      "name": "PipeInputFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": -380,
+        "z": 375
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 1,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/PipeJunction/Build_PipelineJunction_Cross.Build_PipelineJunction_Cross_C": [
+    {
+      "name": "Connection0",
+      "kind": "pipe",
+      "offset": {
+        "x": -100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 199,
+      "spread": 100.2
+    },
+    {
+      "name": "Connection1",
+      "kind": "pipe",
+      "offset": {
+        "x": 100,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 638,
+      "spread": 100
+    },
+    {
+      "name": "Connection2",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 487,
+      "spread": 5
+    },
+    {
+      "name": "Connection3",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": -100,
+        "z": 0
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 544,
+      "spread": 0.1
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/PipePump/Build_PipelinePump.Build_PipelinePump_C": [
+    {
+      "name": "Connection0",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 30,
+      "spread": 150
+    },
+    {
+      "name": "Connection1",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 30,
+      "spread": 120
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/PipePumpMk2/Build_PipelinePumpMK2.Build_PipelinePumpMk2_C": [
+    {
+      "name": "Connection0",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 6,
+      "spread": 0
+    },
+    {
+      "name": "Connection1",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 6,
+      "spread": 200
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/PipeValve/Build_Valve.Build_Valve_C": [
+    {
+      "name": "Connection0",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 8,
+      "spread": 0
+    },
+    {
+      "name": "Connection1",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "normal": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "samples": 8,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/ResourceSink/Build_ResourceSink.Build_ResourceSink_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 500,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 3,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/SmelterMk1/Build_SmelterMk1.Build_SmelterMk1_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -300,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 47,
+      "spread": 0.1
+    },
+    {
+      "name": "Output2",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 200,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 41,
+      "spread": 0.1
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -400,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 18,
+      "spread": 0
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 400,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 16,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/StorageContainerMk2/Build_StorageContainerMk2.Build_StorageContainerMk2_C": [
+    {
+      "name": "Input0",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -400,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 142,
+      "spread": 0
+    },
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": -400,
+        "z": 500
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 134,
+      "spread": 0
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 400,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 134,
+      "spread": 0
+    },
+    {
+      "name": "Output2",
+      "kind": "belt",
+      "offset": {
+        "x": 0,
+        "y": 400,
+        "z": 500
+      },
+      "normal": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "samples": 134,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/TruckStation/Build_TruckStation.Build_TruckStation_C": [
+    {
+      "name": "Input1",
+      "kind": "belt",
+      "offset": {
+        "x": 300,
+        "y": -1004.6,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 8,
+      "spread": 0
+    },
+    {
+      "name": "Input2",
+      "kind": "belt",
+      "offset": {
+        "x": 300,
+        "y": -1004.6,
+        "z": 300
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 8,
+      "spread": 0
+    },
+    {
+      "name": "Output0",
+      "kind": "belt",
+      "offset": {
+        "x": -300,
+        "y": -1005.8000000000001,
+        "z": 100
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 8,
+      "spread": 0
+    },
+    {
+      "name": "Output1",
+      "kind": "belt",
+      "offset": {
+        "x": -300,
+        "y": -1005.8000000000001,
+        "z": 300
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 8,
+      "spread": 0
+    }
+  ],
+  "/Game/FactoryGame/Buildable/Factory/WaterPump/Build_WaterPump.Build_WaterPump_C": [
+    {
+      "name": "FGPipeConnectionFactory",
+      "kind": "pipe",
+      "offset": {
+        "x": 0,
+        "y": -460,
+        "z": 240
+      },
+      "normal": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "samples": 10,
+      "spread": 0
+    }
+  ]
+}

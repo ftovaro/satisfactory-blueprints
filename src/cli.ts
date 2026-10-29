@@ -3,7 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { blueprintToJson, readBlueprint, writeBlueprint } from "./blueprint-io.js";
 import { resolveBlueprintRoot } from "./paths.js";
-import { formatSummary, summarize } from "./summary.js";
+import { formatSummary, shortName, summarize } from "./summary.js";
+import { Blueprint } from "@etothepii/satisfactory-file-parser";
+import { ConnectorCatalog, ConnectorSample, buildConnectorCatalog, collectConnectorSamples } from "./analysis/connectors.js";
+import { CONNECTOR_FILE } from "./connectors.js";
+import { TEMPLATE_FILE, extractTemplates, saveTemplates } from "./templates.js";
+import { generateMachineRow } from "./generators/machine-row.js";
 
 const USAGE = `Usage: sbp <command> [options]
 
@@ -14,6 +19,11 @@ Commands:
   roundtrip <file|session/name>
                               Parse and re-serialize a blueprint, then compare it to the original
   scan [session]              Parse every blueprint and report which ones fail
+  connectors                  Print the belt/pipe connector positions learned from all blueprints
+  learn                       Rebuild data/templates.json and data/connectors.json from your blueprints
+  generate row --machine <constructor|smelter> --count <n> [--recipe <name>] [--belt <1-5>] [--pole <1-2>]
+               (--session <name> | --out-dir <path>) [--name <blueprint name>] [--force]
+                              Generate a row of machines with input/output manifolds and power
 
 Options:
   --dir <path>   Blueprint root folder (default: %LOCALAPPDATA%\\FactoryGame\\Saved\\SaveGames\\blueprints,
@@ -125,6 +135,85 @@ function cmdScan(root: string, session?: string): void {
   if (failed > 0) process.exitCode = 1;
 }
 
+function readAllBlueprints(root: string): Blueprint[] {
+  const blueprints: Blueprint[] = [];
+  for (const session of listSessions(root)) {
+    for (const file of listSbpFiles(path.join(root, session))) {
+      try {
+        blueprints.push(readBlueprint(file));
+      } catch {
+        // Unparseable blueprints are reported by "scan"; skip them here.
+      }
+    }
+  }
+  return blueprints;
+}
+
+function learnConnectors(blueprints: Blueprint[]): ConnectorCatalog {
+  const samples = new Map<string, Map<string, ConnectorSample[]>>();
+  for (const blueprint of blueprints) collectConnectorSamples(blueprint, samples);
+  return buildConnectorCatalog(samples);
+}
+
+function cmdLearn(root: string): void {
+  const blueprints = readAllBlueprints(root);
+  const catalog = learnConnectors(blueprints);
+  fs.mkdirSync(path.dirname(CONNECTOR_FILE), { recursive: true });
+  fs.writeFileSync(CONNECTOR_FILE, JSON.stringify(catalog, null, 2));
+  console.log(`Connector data for ${Object.keys(catalog).length} building type(s) -> ${CONNECTOR_FILE}`);
+
+  // Production, logistics and power buildings only; architecture is not needed by the generators.
+  const library = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/"));
+  saveTemplates(library);
+  console.log(`Templates for ${Object.keys(library.types).length} building type(s) -> ${TEMPLATE_FILE}`);
+}
+
+function cmdGenerate(root: string, args: Args): void {
+  const kind = args.positional[0];
+  if (kind !== "row") throw new Error(`Unknown generator "${kind ?? ""}". Available: row`);
+
+  const flag = (name: string) => (typeof args.flags[name] === "string" ? (args.flags[name] as string) : undefined);
+  const number = (name: string) => (flag(name) !== undefined ? Number(flag(name)) : undefined);
+  if (!flag("machine") || number("count") === undefined) throw new Error('"generate row" needs --machine and --count.');
+
+  const session = flag("session");
+  const outDir = flag("out-dir") ?? (session ? path.join(root, session) : undefined);
+  if (!outDir) throw new Error("Pass --session <name> to install into a game session, or --out-dir <path>.");
+  if (session && !fs.existsSync(outDir)) throw new Error(`Session folder not found: ${outDir}. Existing sessions: ${listSessions(root).join(", ")}`);
+
+  const blueprint = generateMachineRow({
+    machine: flag("machine")!,
+    count: number("count")!,
+    recipe: flag("recipe"),
+    belt: number("belt"),
+    pole: number("pole"),
+    name: flag("name"),
+  });
+
+  const fileName = blueprint.name.replace(/[<>:"/\\|?*]/g, "_");
+  if (fs.existsSync(path.join(outDir, `${fileName}.sbp`)) && args.flags.force !== true) {
+    throw new Error(`"${fileName}.sbp" already exists in ${outDir}. Use --force to overwrite or --name to pick another name.`);
+  }
+  const written = writeBlueprint(blueprint, outDir, fileName);
+  // Read it back to make sure the file we produced is valid.
+  console.log(formatSummary(summarize(readBlueprint(written.sbp))));
+  console.log(`\nWrote ${written.sbp}`);
+  if ((blueprint.header.designerDimension?.x ?? 0) > 6) {
+    console.log("Warning: this layout is larger than the biggest Blueprint Designer (6 x 6 foundations).");
+  }
+}
+
+function cmdConnectors(root: string): void {
+  const catalog = learnConnectors(readAllBlueprints(root));
+  const fmt = (v: { x: number; y: number; z: number }) => `${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)}`;
+  for (const [typePath, connectors] of Object.entries(catalog)) {
+    console.log(shortName(typePath));
+    for (const c of connectors) {
+      console.log(`  ${c.name.padEnd(22)} ${c.kind}  offset [${fmt(c.offset)}]  normal [${fmt(c.normal)}]  n=${c.samples}  spread=${c.spread}`);
+    }
+  }
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const root = resolveBlueprintRoot(typeof args.flags.dir === "string" ? args.flags.dir : undefined);
@@ -145,6 +234,12 @@ function main(): void {
       return cmdRoundtrip(requireTarget());
     case "scan":
       return cmdScan(root, target);
+    case "connectors":
+      return cmdConnectors(root);
+    case "learn":
+      return cmdLearn(root);
+    case "generate":
+      return cmdGenerate(root, args);
     default:
       console.log(USAGE);
   }

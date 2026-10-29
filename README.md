@@ -4,7 +4,7 @@ A command-line toolkit for working with [Satisfactory](https://www.satisfactoryg
 
 The long-term goal is to **generate blueprints automatically**: ask for "a motor factory at 10/min" and get a ready-to-use blueprint dropped into your game's blueprint folder. The first milestone is reading and understanding existing blueprints, which is what works today.
 
-> Status: early development. Reading, inspecting and round-tripping blueprints works. Generation is in progress.
+> Status: early development. Reading blueprints works, and the first generator (a row of machines) produces blueprints that still need in-game testing.
 
 ## Features
 
@@ -13,6 +13,9 @@ The long-term goal is to **generate blueprints automatically**: ask for "a motor
 - `dump`: full blueprint as JSON, for studying how buildings and connections are stored
 - `roundtrip`: parse and re-serialize a blueprint to verify the writer produces identical content
 - `scan`: parse every blueprint you own and report any that fail
+- `connectors`: show where each building's belt/pipe connectors are, learned from real blueprints
+- `learn`: rebuild the bundled building data from the blueprints on your machine
+- `generate row`: create a row of constructors or smelters with a splitter manifold, a merger manifold and power
 
 Parsing and serialization are powered by [`@etothepii/satisfactory-file-parser`](https://github.com/etothepii4/satisfactory-file-parser).
 
@@ -42,6 +45,31 @@ npm run sbp -- scan
 ```
 
 A blueprint can be given as `Session/Name` (relative to the blueprint folder) or as a full path to an `.sbp` file.
+
+### Generating blueprints
+
+```bash
+npm run sbp -- generate row --machine constructor --count 4 --recipe IronPlate --belt 2 --session "My Session"
+npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --out-dir ./out
+```
+
+| Option      | Meaning                                                                 |
+|-------------|-------------------------------------------------------------------------|
+| `--machine` | `constructor` or `smelter`                                              |
+| `--count`   | number of machines in the row                                           |
+| `--recipe`  | optional recipe, e.g. `IronPlate`, `Screw`, `Wire`, `IngotIron` (or a full recipe path) |
+| `--belt`    | conveyor tier 1-5 (default 1)                                           |
+| `--pole`    | power pole tier 1-2 (default 1)                                         |
+| `--session` | write straight into that session's blueprint folder                     |
+| `--out-dir` | write to any folder instead                                             |
+| `--name`    | blueprint name (default describes the contents)                         |
+| `--force`   | overwrite an existing blueprint with the same name                      |
+
+Layout: machines face the same direction, a line of splitters feeds their inputs and a line of mergers collects their outputs. Connect your supply belt to the left end of the splitter line and take the products from the right end of the merger line. Power poles sit between the machines; connect any of them to your grid. After placing the blueprint in-game, you can open it in the Blueprint Designer and re-save it so the game recalculates its cost.
+
+### How generation works
+
+The save format does not describe where a machine's connectors are, so the tool learns it: belts are splines whose end points sit exactly on the connectors they attach to, so measuring those end points across many real blueprints gives each connector's position (`data/connectors.json`). New buildings are cloned from real objects (`data/templates.json`) and only their names, positions and connections are changed, so they keep exactly the structure the game expects. Run `npm run sbp -- learn` to rebuild both files from the blueprints on your own machine.
 
 ### Where blueprints live
 
@@ -79,10 +107,11 @@ Buildings:
 ## Roadmap
 
 1. ~~Read, inspect and round-trip blueprints~~
-2. Learn building footprints and connector positions from real blueprints
-3. Generate simple modules (a row of machines with input/output manifolds and power)
-4. Recipe and ratio calculator
-5. Full production lines (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
+2. ~~Learn connector positions from real blueprints~~
+3. Generate simple modules (a row of machines with input/output manifolds and power): first version done, in-game testing pending
+4. Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts
+5. Recipe and ratio calculator
+6. Full production lines (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
 
 ## Safety notes
 

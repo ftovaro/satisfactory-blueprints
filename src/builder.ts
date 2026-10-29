@@ -1,0 +1,208 @@
+import { Blueprint, SaveComponent, SaveEntity } from "@etothepii/satisfactory-file-parser";
+import { Transform, Vec3, length, scale, sub, toWorld, transform, vec } from "./geometry.js";
+import { SELF, TemplateLibrary, cloneDeep, loadTemplates } from "./templates.js";
+import { costOf } from "./data/costs.js";
+
+/** A placed building inside a blueprint under construction. */
+export interface Placed {
+  entity: SaveEntity;
+  components: Map<string, SaveComponent>;
+}
+
+/** Reference to one connector of a placed building, e.g. { building, name: "Input0" }. */
+export interface ConnectorRef {
+  building: Placed;
+  name: string;
+}
+
+const LEVEL = "Persistent_Level";
+
+function objectRef(pathName: string) {
+  return { levelName: LEVEL, pathName };
+}
+
+/** Builds a blueprint by instantiating building templates and wiring them together. */
+export class BlueprintBuilder {
+  private readonly library: TemplateLibrary;
+  private readonly objects: (SaveEntity | SaveComponent)[] = [];
+  private readonly costs = new Map<string, number>();
+  private readonly recipes = new Set<string>();
+  // Arbitrary unique ids in the range the game itself uses for instance names.
+  private nextId = 2147000000;
+
+  constructor(library: TemplateLibrary = loadTemplates()) {
+    this.library = library;
+  }
+
+  /** Places a building of the given type (full typePath or a unique suffix such as "Build_ConstructorMk1_C"). */
+  place(type: string, at: Transform): Placed {
+    const placed = this.instantiate(type, at);
+    this.addCost(costOf(placed.entity.typePath));
+    return placed;
+  }
+
+  private instantiate(type: string, at: Transform): Placed {
+    const typePath = this.resolveType(type);
+    const template = this.library.types[typePath];
+    const selfName = `${LEVEL}:PersistentLevel.${typePath.split(".").pop()}_${this.nextId++}`;
+
+    const entity = this.renameDeep(cloneDeep(template.entity), selfName);
+    entity.transform = { ...at } as any;
+
+    const components = new Map<string, SaveComponent>();
+    for (const component of template.components) {
+      const copy = this.renameDeep(cloneDeep(component), selfName);
+      components.set(copy.instanceName.split(".").pop()!, copy);
+    }
+
+    this.objects.push(entity, ...components.values());
+    const built = (entity.properties as any).mBuiltWithRecipe?.value?.pathName;
+    if (built) this.recipes.add(built);
+    return { entity, components };
+  }
+
+  /** Sets the production recipe of a machine. */
+  setRecipe(machine: Placed, recipePath: string): void {
+    (machine.entity.properties as any).mCurrentRecipe = {
+      type: "ObjectProperty",
+      name: "mCurrentRecipe",
+      propertyTagType: { name: "ObjectProperty", children: [] },
+      value: { levelName: "", pathName: recipePath },
+    };
+  }
+
+  /** Places a straight conveyor belt from an output connector to an input connector. */
+  belt(type: string, from: ConnectorRef & { position: Vec3 }, to: ConnectorRef & { position: Vec3 }): Placed {
+    const delta = sub(to.position, from.position);
+    const belt = this.instantiate(type, transform(from.position));
+    // Straight belts saved by the game use tangents half as long as the belt.
+    const tangent = scale(delta, 0.5);
+    (belt.entity.properties as any).mSplineData.values = [vec(), delta].map((location) => this.splinePoint(belt, location, tangent));
+    this.link({ building: belt, name: "ConveyorAny0" }, from);
+    this.link({ building: belt, name: "ConveyorAny1" }, to);
+    // Belts cost about one part per 2 m of length.
+    const meters = length(delta) / 100;
+    this.addCost(Object.fromEntries(Object.entries(costOf(belt.entity.typePath)).map(([item, n]) => [item, n * Math.max(1, Math.ceil(meters / 2))])));
+    return belt;
+  }
+
+  /** Connects two belt connectors to each other (both sides store the link). */
+  link(a: ConnectorRef, b: ConnectorRef): void {
+    const ca = this.component(a);
+    const cb = this.component(b);
+    (ca.properties as any).mConnectedComponent = this.objectProperty("mConnectedComponent", cb.instanceName);
+    (cb.properties as any).mConnectedComponent = this.objectProperty("mConnectedComponent", ca.instanceName);
+  }
+
+  /** Runs a power line between two power connectors, e.g. a pole's "PowerConnection" and a machine's "PowerInput". */
+  wire(a: ConnectorRef & { position: Vec3 }, b: ConnectorRef & { position: Vec3 }): Placed {
+    const line = this.place("Build_PowerLine_C", transform(a.position));
+    const ca = this.component(a);
+    const cb = this.component(b);
+    const special = line.entity.specialProperties as any;
+    special.source = objectRef(ca.instanceName);
+    special.target = objectRef(cb.instanceName);
+
+    const props = line.entity.properties as any;
+    const wire = props.mWireInstances?.values?.[0]?.properties;
+    if (wire?.Locations) {
+      wire.Locations[0].value = { ...a.position };
+      wire.Locations[1].value = { ...b.position };
+    }
+    if (props.mCachedLength) props.mCachedLength.value = length(sub(b.position, a.position));
+
+    for (const c of [ca, cb]) {
+      const wires = (c.properties as any).mWires;
+      if (wires) wires.values.push(objectRef(line.entity.instanceName));
+    }
+    return line;
+  }
+
+  /** Name of a building's power connector; it varies by building ("PowerInput", "PowerConnection", ...). */
+  powerConnector(building: Placed): string {
+    const found = [...building.components].find(([, c]) => c.typePath.endsWith("FGPowerConnectionComponent"));
+    if (!found) throw new Error(`${building.entity.typePath} has no power connector.`);
+    return found[0];
+  }
+
+  /** World position of a building-local point. */
+  worldPoint(building: Placed, local: Vec3): Vec3 {
+    return toWorld(building.entity.transform as any, local);
+  }
+
+  build(name: string, options: { description?: string; designerSize?: number } = {}): Blueprint {
+    const header = cloneDeep(this.library.header);
+    const size = options.designerSize ?? this.requiredDesignerSize();
+    header.designerDimension = { x: size, y: size, z: size };
+    header.recipeReferences = [...this.recipes].sort().map((pathName) => ({ levelName: "", pathName }));
+    header.itemCosts = [...this.costs].map(([pathName, amount]) => [{ levelName: "", pathName }, Math.ceil(amount)]);
+
+    return {
+      name,
+      compressionInfo: cloneDeep(this.library.compressionInfo),
+      header,
+      config: {
+        configVersion: 3,
+        description: options.description ?? "",
+        color: { r: 0.9, g: 0.45, b: 0.1, a: 1 },
+        iconID: -1,
+        referencedIconLibrary: "",
+        iconLibraryType: "",
+      },
+      objects: this.objects,
+    };
+  }
+
+  /**
+   * Smallest Blueprint Designer (in foundations per side, at least the 4 x 4 Mk1) that holds every
+   * building. The designer is centered on the origin; 4 m of margin covers building footprints.
+   */
+  private requiredDesignerSize(): number {
+    let extent = 0;
+    for (const obj of this.objects) {
+      const t = (obj as SaveEntity).transform?.translation;
+      if (t) extent = Math.max(extent, Math.abs(t.x), Math.abs(t.y));
+    }
+    return Math.max(4, Math.ceil((2 * (extent + 400)) / 800));
+  }
+
+  private resolveType(type: string): string {
+    if (this.library.types[type]) return type;
+    const matches = Object.keys(this.library.types).filter((t) => t.endsWith(`.${type}`));
+    if (matches.length !== 1) throw new Error(`Unknown building type "${type}". Run "sbp templates" to refresh the template library.`);
+    return matches[0];
+  }
+
+  private component(ref: ConnectorRef): SaveComponent {
+    const wanted = ref.name.toLowerCase();
+    const found = [...ref.building.components].find(([name]) => name.toLowerCase() === wanted);
+    if (!found) throw new Error(`${ref.building.entity.typePath} has no connector "${ref.name}"`);
+    return found[1];
+  }
+
+  private objectProperty(name: string, pathName: string) {
+    return { type: "ObjectProperty", name, propertyTagType: { name: "ObjectProperty", children: [] }, value: objectRef(pathName) };
+  }
+
+  private splinePoint(belt: Placed, location: Vec3, tangent: Vec3) {
+    const template = (belt.entity.properties as any).mSplineData.values[0];
+    const point = cloneDeep(template);
+    point.properties.Location.value = { ...location };
+    point.properties.ArriveTangent.value = { ...tangent };
+    point.properties.LeaveTangent.value = { ...tangent };
+    return point;
+  }
+
+  private renameDeep<T>(value: T, selfName: string): T {
+    if (typeof value === "string") return (value.includes(SELF) ? value.split(SELF).join(selfName) : value) as T;
+    if (Array.isArray(value)) return value.map((v) => this.renameDeep(v, selfName)) as T;
+    if (value && typeof value === "object") {
+      for (const key of Object.keys(value)) (value as any)[key] = this.renameDeep((value as any)[key], selfName);
+    }
+    return value;
+  }
+
+  private addCost(cost: Record<string, number>): void {
+    for (const [item, amount] of Object.entries(cost)) this.costs.set(item, (this.costs.get(item) ?? 0) + amount);
+  }
+}
