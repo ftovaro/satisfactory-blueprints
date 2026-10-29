@@ -68,10 +68,13 @@ const PUMP_POLE = "Build_PowerPoleMk2_C";
 const PUMP_POLE_HEIGHT = 400;
 /** Rows are turned so inputs face +Y; their connection end is then at -X. */
 const ROW_YAW = 180;
-/** Small signs (icon, then "NAME rate" on one line), this far above the line they describe, and this far outside the routing grid for ports. */
+/**
+ * Small signs (icon, then "NAME rate" on one line) hang on the walls, this far above the line they
+ * describe, 19 cm off the wall (as in real blueprints).
+ */
 const SMALL_SIGN = "Build_StandaloneWidgetSign_Small_C";
 const SIGN_HEIGHT = 250;
-const SIGN_OFFSET = 150;
+const SIGN_OFF_WALL = 19;
 const SIGN_BACKGROUND = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
 /** FICSIT orange for inputs, green for outputs, white for machine rows. */
 const INPUT_COLOR = { r: 0.98, g: 0.45, b: 0.05, a: 1 };
@@ -503,12 +506,12 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     buildLine(line, from);
   }
 
-  // Signs: what comes in and goes out (just outside the routing grid, above each open end, facing
-  // away from the factory), and what each row makes (behind its connection end, above its ports).
+  // Signs: what comes in and goes out (on the outside of the wall, above each opening), and what each
+  // row makes (on the inside of the back wall, facing the row's connection end, above its ports).
   const units = (f: Flow) => (f.kind === "belt" ? "/min" : " m³/min");
   for (const port of ports) {
     const outward = port.side === "input" ? -1 : 1;
-    b.sign(vec(port.at.x + outward * SIGN_OFFSET, port.at.y, port.at.z + SIGN_HEIGHT), port.side === "input" ? 180 : 0, {
+    b.sign(vec(port.at.x + outward * SIGN_OFF_WALL, port.at.y, port.at.z + SIGN_HEIGHT), port.side === "input" ? 180 : 0, {
       type: SMALL_SIGN,
       texts: { Name: `${port.flow.label.toUpperCase()} ${fmt(port.flow.perMinute)}${units(port.flow)}` },
       icon: iconFor(port.flow.label),
@@ -520,7 +523,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     const e = extentOf(r);
     const levels = Math.max(r.row.inputLines.length, r.row.outputLines.length) - 1;
     const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
-    b.sign(vec(e.minX - CELL / 2, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 180, {
+    b.sign(vec(origin.x - CELL / 2 + SIGN_OFF_WALL, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 0, {
       type: SMALL_SIGN,
       texts: { Name: `${r.step.product.name.toUpperCase()} ${fmt(rate)}/min` },
       icon: iconFor(r.step.product.name),
