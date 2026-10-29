@@ -2,8 +2,8 @@ import { BlueprintBuilder, Placed } from "../builder.js";
 import { Vec3, transform, vec } from "../geometry.js";
 
 /**
- * The building around a factory: walls on the envelope, windows, a door, a flat roof, holes where
- * belts and pipes cross the walls, and a wall-mounted power inlet.
+ * The building around a factory: a ground floor of foundations, walls standing on it, windows, a
+ * door, a flat roof, holes where belts and pipes cross the walls, and a wall-mounted power inlet.
  *
  * Geometry learned from real blueprints:
  * - an 8 m x 4 m wall has its origin at the bottom center; it spans its local Y (8 m) and Z (4 m),
@@ -28,7 +28,9 @@ export interface Opening {
 
 export interface ShellOptions {
   envelope: { minX: number; maxX: number; minY: number; maxY: number };
-  /** Height of the roof's underside (multiple of 4 m). */
+  /** Top of the ground floor, where the walls stand. */
+  floorZ: number;
+  /** Height of the roof's underside (whole 4 m walls above the floor). */
   roofZ: number;
   openings: Opening[];
 }
@@ -40,7 +42,7 @@ export interface Shell {
 }
 
 export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
-  const { envelope: e, roofZ, openings } = options;
+  const { envelope: e, floorZ, roofZ, openings } = options;
   const solid = b.pick("Build_Wall_8x4_01_C", "Build_Wall_Concrete_8x4_C");
   const window = b.pick("Build_Wall_Window_8x4_01_C", "Build_Wall_Window_8x4_03_C", "Build_Wall_Window_Thin_8x4_01_C", "Build_Wall_Concrete_8x4_Window_02_C") ?? solid;
   const door = b.pick("Build_Wall_Door_8x4_01_C", "Build_Wall_Door_8x4_01_Steel_C", "Build_Wall_Concrete_SDoor_8x4_C") ?? solid;
@@ -51,7 +53,7 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
   if (!solid) return { pieces: 0 };
 
   let pieces = 0;
-  const courses = Math.round(roofZ / WALL_HEIGHT);
+  const courses = Math.round((roofZ - floorZ) / WALL_HEIGHT);
   // Sides: [fixed coordinate, along axis range, outward yaw]; a wall's +X points outward.
   const sides = [
     { name: "back", x: e.minX, y: undefined, from: e.minY, to: e.maxY, yaw: 180 },
@@ -67,7 +69,7 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
       const along = side.from + (s + 0.5) * WALL_WIDTH;
       const at = (z: number) => (side.x !== undefined ? vec(side.x, along, z) : vec(along, side.y!, z));
       for (let c = 0; c < courses; c++) {
-        const z = c * WALL_HEIGHT;
+        const z = floorZ + c * WALL_HEIGHT;
         const here = onSide.filter((o) => {
           const pos = side.x !== undefined ? o.at.y : o.at.x;
           return Math.abs(pos - along) <= WALL_WIDTH / 2 && o.at.z >= z && o.at.z < z + WALL_HEIGHT;
@@ -88,12 +90,14 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
     }
   }
 
-  // Flat roof of 1 m foundations resting on the walls.
+  // Ground floor and flat roof of 1 m foundations, inside and on top of the walls.
   if (roof) {
-    for (let x = e.minX; x < e.maxX; x += FOUNDATION) {
-      for (let y = e.minY; y < e.maxY; y += FOUNDATION) {
-        b.place(roof, transform(vec(x + FOUNDATION / 2, y + FOUNDATION / 2, roofZ + 50)));
-        pieces++;
+    for (const z of [floorZ - 50, roofZ + 50]) {
+      for (let x = e.minX; x < e.maxX; x += FOUNDATION) {
+        for (let y = e.minY; y < e.maxY; y += FOUNDATION) {
+          b.place(roof, transform(vec(x + FOUNDATION / 2, y + FOUNDATION / 2, z)));
+          pieces++;
+        }
       }
     }
   }
@@ -101,7 +105,7 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
   // Power inlet: a wall pole on the outside of the back wall, at head height.
   let inlet: Shell["inlet"];
   if (wallPole) {
-    const position = vec(e.minX, e.minY + WALL_WIDTH / 2, 250);
+    const position = vec(e.minX, e.minY + WALL_WIDTH / 2, floorZ + 250);
     const pole = b.place(wallPole, transform(position, 180));
     inlet = { pole, position };
     pieces++;

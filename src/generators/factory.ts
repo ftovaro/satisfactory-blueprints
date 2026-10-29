@@ -46,14 +46,21 @@ const FOUNDATION_TYPE = "Build_Foundation_Concrete_8x1_C";
 /** Slab thickness (cm); machines stand on its top. */
 const SLAB = 100;
 /** Gap (cm) between rows on the same floor: two cells, so lines can rise between them. */
-const ROW_GAP = 2 * CELL;
+const ROW_GAP = CELL;
 /** Head room (cm) above the tallest thing on a floor; floors are a whole number of 4 m walls. */
 const HEADROOM = 150;
 const WALL = 400;
-/** Free cells around the rows for routing: behind (where rows connect), in front, and to the sides. */
-const MARGIN_BACK = 3 * CELL;
-const MARGIN_FRONT = 2 * CELL;
-const MARGIN_SIDE = 2 * CELL;
+/**
+ * Free space around the rows for routing: behind (where rows connect), in front, and to the sides.
+ * The tightest that routes wins; a little overlap between pieces is preferred to a bigger building.
+ */
+interface Margins { back: number; front: number; side: number }
+const MARGINS: Margins[] = [
+  { back: 2 * CELL, front: 0, side: 0 },
+  { back: 2 * CELL, front: CELL, side: CELL },
+  { back: 3 * CELL, front: 2 * CELL, side: 2 * CELL },
+];
+const NO_ROUTE = "Could not route every connection";
 /** One Conveyor Lift is at most about 48 m tall. */
 const MAX_RISE_LEVELS = 12;
 const ATTEMPTS = 60;
@@ -119,6 +126,17 @@ interface RoutedLine {
 }
 
 export function generateFactory(data: GameData, options: FactoryOptions): { blueprint: Blueprint; report: string } {
+  for (const margins of MARGINS) {
+    try {
+      return layoutFactory(data, options, margins);
+    } catch (e) {
+      if (!(e instanceof Error && e.message.startsWith(NO_ROUTE)) || margins === MARGINS[MARGINS.length - 1]) throw e;
+    }
+  }
+  throw new Error(NO_ROUTE);
+}
+
+function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins): { blueprint: Blueprint; report: string } {
   const production = plan(data, options.target, options.rate, options);
   const kindOf = (cls: string): LineKind => (data.items[cls].form === "solid" ? "belt" : "pipe");
 
@@ -193,8 +211,8 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     if (short.length > 0) z += Math.ceil((Math.max(...short.map((r) => r.row.height)) + SLAB + HEADROOM) / WALL) * WALL;
   }
   const top = Math.max(z, ...rows.filter(tall).map((r) => floorZ[r.floor] + r.row.height + SLAB + HEADROOM));
-  // The roof rests on the walls right above the last floor (floors are whole walls tall).
-  const roofZ = Math.ceil(top / WALL) * WALL;
+  // The roof rests on the walls right above the last floor (walls stand on the ground slab).
+  const roofZ = SLAB + Math.ceil((top - SLAB) / WALL) * WALL;
 
   // Flows: every item a row consumes, plus everything that leaves the factory.
   const flows: Flow[] = [];
@@ -253,6 +271,8 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   });
   floors.forEach((floor, f) => {
     // One strip of foundations per row, so the gaps between rows stay open for vertical lines.
+    // The ground floor is the building's (see buildShell).
+    if (floorZ[f] <= SLAB) return;
     for (const e of slabs[f].rows) {
       for (let x = slabs[f].minX; x < e.maxX; x += FOUNDATION) {
         for (let y = Math.floor(e.minY / FOUNDATION) * FOUNDATION; y < e.maxY; y += FOUNDATION) {
@@ -299,10 +319,10 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   // The routing grid: cell centers on a 4 m lattice, levels at belt height above each floor.
   const all = rows.map(extentOf);
   const bounds = {
-    minX: -MARGIN_BACK,
-    maxX: Math.max(...all.map((e) => e.maxX)) + MARGIN_FRONT,
-    minY: Math.min(...all.map((e) => e.minY)) - MARGIN_SIDE,
-    maxY: Math.max(...all.map((e) => e.maxY)) + MARGIN_SIDE,
+    minX: -margins.back,
+    maxX: Math.max(...all.map((e) => e.maxX)) + margins.front,
+    minY: Math.min(...all.map((e) => e.minY)) - margins.side,
+    maxY: Math.max(...all.map((e) => e.maxY)) + margins.side,
   };
   // Cell centers fall on multiples of CELL in x, so the first cell behind the rows (which end at
   // x = 0) is centered 4 m behind them and touches them.
@@ -424,7 +444,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   const climb = (f: Flow) => Math.max(...f.sinks.map((s) => (s.entry?.position.z ?? 0))) - (f.source ? exitOf(f).position.z : 0);
   let routed = routeAll([...flows].sort((a, c) => climb(c) - climb(a) || c.sinks.length - a.sinks.length));
   for (let attempt = 1; !routed && attempt < ATTEMPTS; attempt++) routed = routeAll([...flows].sort(() => Math.random() - 0.5));
-  if (!routed) throw new Error("Could not route every connection; try a lower rate or fewer steps.");
+  if (!routed) throw new Error(`${NO_ROUTE}; try a lower rate or fewer steps.`);
   const { grid, lines } = routed;
 
   // Pumps are wired to poles standing on free ground cells near them.
@@ -512,7 +532,8 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     const outward = port.side === "input" ? -1 : 1;
     b.sign(vec(port.at.x + outward * SIGN_OFFSET, port.at.y, port.at.z + SIGN_HEIGHT), port.side === "input" ? 180 : 0, {
       texts: {
-        Name: port.flow.label.toUpperCase(),
+        // The sign layout shows only its main text, so the rate goes next to the item.
+        Name: `${port.flow.label.toUpperCase()} ${fmt(port.flow.perMinute)}${units(port.flow)}`,
         Other_0: `${port.side === "input" ? "INPUT" : "OUTPUT"} · ${port.flow.kind} Mk${tierFor(port.flow.kind, port.flow.perMinute)}`,
         Other_1: `${fmt(port.flow.perMinute)}${units(port.flow)}`,
       },
@@ -527,7 +548,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
     b.sign(vec(e.minX - CELL / 2, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 180, {
       texts: {
-        Name: r.step.product.name.toUpperCase(),
+        Name: `${r.step.product.name.toUpperCase()} ${fmt(rate)}/min`,
         Other_0: `${r.row.options.count}x ${r.row.spec.key}${(r.row.options.clocks ?? []).some((c) => Math.abs(c - 1) > 1e-6) ? ` (last at ${fmt((r.row.options.clocks ?? []).slice(-1)[0] * 100)}%)` : ""}`,
         Other_1: `${fmt(rate)}/min`,
       },
@@ -543,7 +564,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     minX: origin.x - CELL / 2, maxX: origin.x + (size.nx - 0.5) * CELL,
     minY: origin.y - CELL / 2, maxY: origin.y + (size.ny - 0.5) * CELL,
   };
-  const shell = buildShell(b, { envelope, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })) });
+  const shell = buildShell(b, { envelope, floorZ: SLAB, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })) });
   if (shell.inlet) {
     const first = rows[0].poleTops![0];
     b.wire({ building: shell.inlet.pole, name: b.powerConnector(shell.inlet.pole), position: shell.inlet.position }, { building: first.pole, name: b.powerConnector(first.pole), position: first.position });
