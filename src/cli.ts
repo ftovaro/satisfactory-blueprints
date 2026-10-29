@@ -9,6 +9,7 @@ import { ConnectorCatalog, ConnectorSample, buildConnectorCatalog, collectConnec
 import { CONNECTOR_FILE } from "./connectors.js";
 import { TEMPLATE_FILE, extractTemplates, saveTemplates } from "./templates.js";
 import { generateMachineRow } from "./generators/machine-row.js";
+import { GENERATED_MARKER } from "./builder.js";
 
 const USAGE = `Usage: sbp <command> [options]
 
@@ -156,16 +157,18 @@ function learnConnectors(blueprints: Blueprint[]): ConnectorCatalog {
 }
 
 function cmdLearn(root: string): void {
-  const blueprints = readAllBlueprints(root);
+  // Learn only from blueprints made in the game, never from our own output.
+  const blueprints = readAllBlueprints(root).filter((b) => !b.config.description.includes(GENERATED_MARKER));
   const catalog = learnConnectors(blueprints);
   fs.mkdirSync(path.dirname(CONNECTOR_FILE), { recursive: true });
   fs.writeFileSync(CONNECTOR_FILE, JSON.stringify(catalog, null, 2));
   console.log(`Connector data for ${Object.keys(catalog).length} building type(s) -> ${CONNECTOR_FILE}`);
 
   // Production, logistics and power buildings only; architecture is not needed by the generators.
-  const library = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/"));
-  saveTemplates(library);
-  console.log(`Templates for ${Object.keys(library.types).length} building type(s) -> ${TEMPLATE_FILE}`);
+  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/"));
+  saveTemplates(templates);
+  const counts = templates.versions.map((v) => `save ${v.header.saveVersion}: ${Object.keys(v.types).length}`).join(", ");
+  console.log(`Templates (${counts}) -> ${TEMPLATE_FILE}`);
 }
 
 function cmdGenerate(root: string, args: Args): void {

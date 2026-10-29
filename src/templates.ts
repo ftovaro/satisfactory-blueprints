@@ -18,12 +18,25 @@ export interface BuildingTemplate {
   components: SaveComponent[];
 }
 
+/**
+ * Templates captured from blueprints of a single save version. Objects are serialized according to
+ * the blueprint header's version, so a generated blueprint must never mix templates from different
+ * versions (doing so crashed the game when placing it).
+ */
 export interface TemplateLibrary {
-  /** Header and compression settings copied from the newest blueprint the templates came from. */
+  /** Header and compression settings copied from the newest blueprint of this save version. */
   header: Blueprint["header"];
   compressionInfo: Blueprint["compressionInfo"];
   types: Record<string, BuildingTemplate>;
 }
+
+export interface TemplateCatalog {
+  /** One library per save version, newest first. */
+  versions: TemplateLibrary[];
+}
+
+/** Oldest save version to keep templates for (Satisfactory 1.0). */
+const MIN_SAVE_VERSION = 46;
 
 const DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 export const TEMPLATE_FILE = path.join(DATA_DIR, "templates.json");
@@ -67,9 +80,23 @@ function sanitize(entity: SaveEntity, components: SaveComponent[]): BuildingTemp
   return template;
 }
 
-/** Captures one template per building type, preferring blueprints saved by the newest game version. */
-export function extractTemplates(blueprints: Blueprint[], wantedTypes?: (typePath: string) => boolean): TemplateLibrary {
-  const sorted = [...blueprints].sort((a, b) => b.header.saveVersion - a.header.saveVersion || b.header.buildVersion - a.header.buildVersion);
+/** Captures one template per building type for every save version found (1.0 and newer). */
+export function extractTemplates(blueprints: Blueprint[], wantedTypes?: (typePath: string) => boolean): TemplateCatalog {
+  const byVersion = new Map<number, Blueprint[]>();
+  for (const blueprint of blueprints) {
+    const version = blueprint.header.saveVersion;
+    if (version < MIN_SAVE_VERSION) continue;
+    byVersion.set(version, [...(byVersion.get(version) ?? []), blueprint]);
+  }
+  const versions = [...byVersion.keys()]
+    .sort((a, b) => b - a)
+    .map((version) => extractLibrary(byVersion.get(version)!, wantedTypes))
+    .filter((library) => Object.keys(library.types).length > 0);
+  return { versions };
+}
+
+function extractLibrary(blueprints: Blueprint[], wantedTypes?: (typePath: string) => boolean): TemplateLibrary {
+  const sorted = [...blueprints].sort((a, b) => b.header.buildVersion - a.header.buildVersion);
   const newest = sorted[0];
   const types: Record<string, BuildingTemplate> = {};
 
@@ -94,16 +121,31 @@ export function extractTemplates(blueprints: Blueprint[], wantedTypes?: (typePat
   return { header, compressionInfo: cloneDeep(newest.compressionInfo), types: Object.fromEntries(Object.entries(types).sort()) };
 }
 
-export function saveTemplates(library: TemplateLibrary, file = TEMPLATE_FILE): void {
+export function saveTemplates(catalog: TemplateCatalog, file = TEMPLATE_FILE): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(library, replacer, 1));
+  fs.writeFileSync(file, JSON.stringify(catalog, replacer));
 }
 
-let cached: TemplateLibrary | undefined;
-export function loadTemplates(file = TEMPLATE_FILE): TemplateLibrary {
+let cached: TemplateCatalog | undefined;
+export function loadTemplates(file = TEMPLATE_FILE): TemplateCatalog {
   if (!cached) {
-    if (!fs.existsSync(file)) throw new Error(`Template library not found at ${file}. Run "sbp templates" first.`);
-    cached = JSON.parse(fs.readFileSync(file, "utf8"), reviver) as TemplateLibrary;
+    if (!fs.existsSync(file)) throw new Error(`Template library not found at ${file}. Run "sbp learn" first.`);
+    cached = JSON.parse(fs.readFileSync(file, "utf8"), reviver) as TemplateCatalog;
   }
   return cached;
+}
+
+/** Newest single-version library that has templates for every required building type (class names like "Build_ConstructorMk1_C"). */
+export function selectLibrary(requiredTypes: string[], catalog = loadTemplates()): TemplateLibrary {
+  const has = (library: TemplateLibrary, type: string) => Object.keys(library.types).some((t) => t.endsWith(`.${type}`));
+  const library = catalog.versions.find((lib) => requiredTypes.every((type) => has(lib, type)));
+  if (!library) {
+    const missing = requiredTypes.filter((type) => !catalog.versions.some((lib) => has(lib, type)));
+    throw new Error(
+      missing.length > 0
+        ? `No template for: ${missing.join(", ")}. Add a blueprint containing them and run "sbp learn".`
+        : `No single game version has templates for all of: ${requiredTypes.join(", ")}. Add a blueprint containing them and run "sbp learn".`,
+    );
+  }
+  return library;
 }
