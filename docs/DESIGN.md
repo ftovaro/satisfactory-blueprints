@@ -66,6 +66,12 @@ The output direction is chosen per request.
 
 Assemblers, Foundries and Manufacturers have 2 to 4 inputs on the same side, so flat manifolds would cross. Each extra input manifold runs on a higher level and drops into its machine input through a Conveyor Lift. Factories are built upward as well: one production step per floor, connected with lifts, to keep the footprint small.
 
+### Orientation and ports
+
+- A blueprint's front is the side where the Blueprint Designer's terminal was. While placing, the game draws a white arrow pointing that way. In blueprint coordinates the front is **-Y**.
+- Generated layouts are rotated so that inputs enter at the back (+Y edge) and the product leaves at the front (-Y edge), following the arrow.
+- Every port is an **open belt end lying exactly on the designer boundary**, which is what hand-made blueprints do. The game's Auto-Connect mode (press R while placing) only links open belt, pipe, railway and vehicle-path ends, up to 16 m away, preferring the best-aligned one. The free side of a splitter or merger is not an open end.
+
 ### Modules
 
 A module is a self-contained block with typed ports:

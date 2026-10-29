@@ -1,5 +1,5 @@
 import { Blueprint, SaveComponent, SaveEntity } from "@etothepii/satisfactory-file-parser";
-import { Transform, Vec3, length, scale, sub, toWorld, transform, vec } from "./geometry.js";
+import { Transform, Vec3, length, multiply, rotate, scale, snap, sub, toWorld, transform, vec, yaw } from "./geometry.js";
 import { SELF, TemplateLibrary, cloneDeep } from "./templates.js";
 import { costOf } from "./data/costs.js";
 
@@ -14,6 +14,12 @@ export interface ConnectorRef {
   building: Placed;
   name: string;
 }
+
+/**
+ * One end of a belt: a connector it attaches to, or just a position. A belt end left unattached is
+ * an "open connection" that the game's blueprint Auto-Connect mode links to nearby belts (up to 16 m).
+ */
+export type BeltEnd = (ConnectorRef | { building?: undefined; name?: undefined }) & { position: Vec3 };
 
 const LEVEL = "Persistent_Level";
 
@@ -89,14 +95,14 @@ export class BlueprintBuilder {
   }
 
   /** Places a straight conveyor belt from an output connector to an input connector. */
-  belt(type: string, from: ConnectorRef & { position: Vec3 }, to: ConnectorRef & { position: Vec3 }): Placed {
+  belt(type: string, from: BeltEnd, to: BeltEnd): Placed {
     const delta = sub(to.position, from.position);
     const belt = this.instantiate(type, transform(from.position));
     // Straight belts saved by the game use tangents half as long as the belt.
     const tangent = scale(delta, 0.5);
     (belt.entity.properties as any).mSplineData.values = [vec(), delta].map((location) => this.splinePoint(belt, location, tangent));
-    this.link({ building: belt, name: "ConveyorAny0" }, from);
-    this.link({ building: belt, name: "ConveyorAny1" }, to);
+    if (from.building) this.link({ building: belt, name: "ConveyorAny0" }, from);
+    if (to.building) this.link({ building: belt, name: "ConveyorAny1" }, to);
     // Belts cost about one part per 2 m of length.
     const meters = length(delta) / 100;
     this.addCost(Object.fromEntries(Object.entries(costOf(belt.entity.typePath)).map(([item, n]) => [item, n * Math.max(1, Math.ceil(meters / 2))])));
@@ -177,7 +183,13 @@ export class BlueprintBuilder {
     return toWorld(building.entity.transform as any, local);
   }
 
-  build(name: string, options: { description?: string; designerSize?: number } = {}): Blueprint {
+  /**
+   * @param options.yaw Rotates the whole layout around the blueprint center (degrees). Generators lay
+   *   things out in whatever frame is convenient and rotate at the end so the blueprint's front
+   *   (the white arrow shown while placing it, which points to -Y) faces the right way.
+   */
+  build(name: string, options: { description?: string; designerSize?: number; yaw?: number } = {}): Blueprint {
+    if (options.yaw) this.rotateLayout(options.yaw);
     const header = cloneDeep(this.library.header);
     const size = options.designerSize ?? this.requiredDesignerSize();
     header.designerDimension = { x: size, y: size, z: size };
@@ -204,7 +216,7 @@ export class BlueprintBuilder {
    * Smallest Blueprint Designer (in foundations per side, at least the 4 x 4 Mk1) that holds every
    * building. The designer is centered on the origin; 4 m of margin covers building footprints.
    */
-  private requiredDesignerSize(): number {
+  requiredDesignerSize(): number {
     let extent = 0;
     for (const obj of this.objects) {
       const t = (obj as SaveEntity).transform?.translation;
@@ -213,10 +225,30 @@ export class BlueprintBuilder {
     return Math.max(4, Math.ceil((2 * (extent + 400)) / 800));
   }
 
+  /** Rotates every placed object around the vertical axis through the origin. */
+  private rotateLayout(degrees: number): void {
+    const q = yaw(degrees);
+    const turn = (v: Vec3): Vec3 => {
+      const r = rotate(q, v);
+      // Remove float noise so grid-aligned layouts stay grid-aligned.
+      return vec(snap(r.x, 0.001), snap(r.y, 0.001), snap(r.z, 0.001));
+    };
+    for (const obj of this.objects) {
+      const t = (obj as SaveEntity).transform as Transform | undefined;
+      if (!t?.translation) continue;
+      t.translation = turn(t.translation);
+      t.rotation = multiply(q, t.rotation);
+      // Power lines also store their end points in blueprint space.
+      for (const location of (obj.properties as any).mWireInstances?.values?.[0]?.properties?.Locations ?? []) {
+        location.value = turn(location.value);
+      }
+    }
+  }
+
   private resolveType(type: string): string {
     if (this.library.types[type]) return type;
     const matches = Object.keys(this.library.types).filter((t) => t.endsWith(`.${type}`));
-    if (matches.length !== 1) throw new Error(`Unknown building type "${type}". Run "sbp templates" to refresh the template library.`);
+    if (matches.length !== 1) throw new Error(`Unknown building type "${type}". Add a blueprint that contains it and run "sbp learn".`);
     return matches[0];
   }
 

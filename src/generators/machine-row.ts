@@ -1,5 +1,5 @@
 import { Blueprint } from "@etothepii/satisfactory-file-parser";
-import { BlueprintBuilder, Placed } from "../builder.js";
+import { BlueprintBuilder, ConnectorRef, Placed } from "../builder.js";
 import { connector, connectorsOf } from "../connectors.js";
 import { Vec3, add, transform, vec } from "../geometry.js";
 import { findMachine, findRecipe } from "../data/machines.js";
@@ -66,6 +66,12 @@ const LIFT_SETBACK = 300;
 const STACKED_MANIFOLD_SETBACK = 700;
 /** Approximate height (cm) where wires attach to a power pole. */
 const POLE_HEIGHT = 400;
+const FOUNDATION = 800;
+/**
+ * The row is laid out with the flow running along +X. The blueprint's front (its placement arrow)
+ * is -Y, so rotating by -90° makes the product leave toward the arrow.
+ */
+const FLOW_TO_FRONT_YAW = -90;
 
 /**
  * Belt tiers of one manifold line.
@@ -136,7 +142,7 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
   const belts = planBelts(options.count, inputs.length, options);
   const beltType = (tier: number) => `Build_ConveyorBeltMk${tier}_C`;
   const liftType = (tier: number) => `Build_ConveyorLiftMk${tier}_C`;
-  const allTiers = [...belts.inputs.flatMap((l) => [...l.feeders, ...l.chain]), ...belts.output.feeders, ...belts.output.chain];
+  const allTiers = [...belts.inputs.flatMap((l) => [...l.feeders, ...l.chain, l.end]), ...belts.output.feeders, ...belts.output.chain, belts.output.end];
   const liftTiers = stacked ? belts.inputs.slice(1).flatMap((l) => l.feeders) : [];
   const splitterType = "Build_ConveyorAttachmentSplitter_C";
   const mergerType = "Build_ConveyorAttachmentMerger_C";
@@ -159,7 +165,7 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
     machines.push(machine);
   }
 
-  inputs.forEach((input, level) => buildInputLine(b, machines, input, level, stacked, belts.inputs[level], xOf, { beltType, liftType, splitterType }));
+  const supplyPoints = inputs.map((input, level) => buildInputLine(b, machines, input, level, stacked, belts.inputs[level], xOf, { beltType, liftType, splitterType }));
 
   // Merger line: each merger collects from the machine behind it through its -Y side input.
   const mergerY = output.offset.y + FEEDER_LENGTH + ATTACHMENT_RADIUS;
@@ -195,13 +201,27 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
     previousTop = { pole, position: top };
   }
 
+  // Ports: open belt ends on the designer boundary so Auto-Connect (R while placing) can link them to
+  // other blueprints, as hand-made blueprints do. Inputs come in at the -X edge, the output leaves at +X.
+  const designerSize = b.requiredDesignerSize();
+  const half = (designerSize * FOUNDATION) / 2;
+  supplyPoints.forEach((point, level) => {
+    b.belt(beltType(belts.inputs[level].end), { position: vec(-half, point.position.y, point.position.z) }, point);
+  });
+  const last = mergers[mergers.length - 1];
+  const exit = attachmentPoint(mergerType, last.center, "Output1");
+  b.belt(beltType(belts.output.end), { building: last.merger, name: "Output1", position: exit }, { position: vec(half, exit.y, exit.z) });
+
   const recipeLabel = options.label ? ` ${options.label}` : options.recipe && !options.recipe.startsWith("/") ? ` ${options.recipe}` : "";
   const name = options.name ?? `${options.count}x ${capitalize(spec.key)}${recipeLabel}`;
   const inputText = inputs
     .map((_, level) => `${options.inputLabels?.[level] ?? `input ${level + 1}`} at ${level === 0 ? "ground level" : `+${(level * LEVEL_HEIGHT) / 100} m`} (belt Mk${belts.inputs[level].end})`)
     .join(", ");
+  // Rotate so the flow runs along the blueprint's forward arrow: inputs at the back, product out the front.
   return b.build(name, {
-    description: `${options.count} ${spec.key}(s)${recipeLabel}. Inputs enter at the left end: ${inputText}. Output leaves the right end of the merger line (belt Mk${belts.output.end}).`,
+    description: `${options.count} ${spec.key}(s)${recipeLabel}. Inputs enter at the back: ${inputText}. Product leaves at the front, in the direction of the placement arrow (belt Mk${belts.output.end}). Use Auto-Connect (R) to link it to neighboring blueprints.`,
+    designerSize,
+    yaw: FLOW_TO_FRONT_YAW,
   });
 }
 
@@ -221,7 +241,7 @@ function buildInputLine(
   belts: LineBelts,
   xOf: (i: number) => number,
   types: LineTypes,
-): void {
+): ConnectorRef & { position: Vec3 } {
   const { beltType, liftType, splitterType } = types;
   const lineY = stacked ? input.offset.y - STACKED_MANIFOLD_SETBACK : input.offset.y - FEEDER_LENGTH - ATTACHMENT_RADIUS;
   const lineZ = BELT_HEIGHT + level * LEVEL_HEIGHT;
@@ -249,6 +269,8 @@ function buildInputLine(
       { building: prev.splitter, name: "Output1", position: attachmentPoint(splitterType, prev.center, "Output1") },
       { building: next.splitter, name: "Input1", position: attachmentPoint(splitterType, next.center, "Input1") });
   }
+  // Where the supply belt must arrive: the free input of the first splitter.
+  return { building: splitters[0].splitter, name: "Input1", position: attachmentPoint(splitterType, splitters[0].center, "Input1") };
 }
 
 function attachmentPoint(type: string, center: Vec3, name: string): Vec3 {
