@@ -17,6 +17,7 @@ import { findDocsFile, importGameData } from "./gamedata/import.js";
 import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
 import { MachineRowOptions, PortSpec, planLine } from "./generators/machine-row.js";
 import { generateFactory, generatePowerPlant } from "./generators/factory.js";
+import { learnPaints, savePaints } from "./layout/styles.js";
 import { rowOptionsFor } from "./generators/row-options.js";
 import { Blueprint as BlueprintType } from "@etothepii/satisfactory-file-parser";
 import { formatPlan } from "./planner/format.js";
@@ -39,7 +40,7 @@ Commands:
   plan <item> <rate per min> [--recipe "<item>=<recipe>"]... [--input <item>]...
                               Plan a production chain: machines, clock speeds, belts and power
   generate factory <item> <rate per min> [--recipe "<item>=<recipe>"]... [--input <item>]...
-               (--session <name> | --out-dir <path>) [--name <name>] [--force]
+               [--style <metal frame|concrete|steel>] (--session <name> | --out-dir <path>) [--name <name>] [--force]
                               Generate a complete factory: every step stacked in floors, raw inputs
                               and the product at ground level
   generate power-plant <MW> [--generator <name>] [--fuel <item>] [--net] [--recipe ...]...
@@ -195,10 +196,15 @@ function cmdLearn(root: string): void {
   console.log(`Connector data for ${Object.keys(catalog).length} building type(s) -> ${CONNECTOR_FILE}`);
 
   // Production, logistics and power buildings, plus architecture (foundations, walls, roofs) for factory shells.
-  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/") || typePath.includes("/Buildable/Building/"));
+  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/") || typePath.includes("/Buildable/Building/") || typePath.includes("/Prototype/Buildable/Beams/"));
   saveTemplates(templates);
   const counts = templates.versions.map((v) => `save ${v.header.saveVersion}: ${Object.keys(v.types).length}`).join(", ");
   console.log(`Templates (${counts}) -> ${TEMPLATE_FILE}`);
+
+  // How the user's favorite blueprints paint each piece, per building style.
+  const paints = learnPaints(blueprints);
+  savePaints(paints);
+  console.log(`Paint for ${Object.entries(paints).map(([kit, p]) => `${kit} (${Object.keys(p).length} pieces)`).join(", ")}`);
 }
 
 function cmdGenerate(root: string, args: Args): void {
@@ -218,7 +224,7 @@ function cmdGenerate(root: string, args: Args): void {
     const rate = Number(args.positional[args.positional.length - 1]);
     const target = args.positional.slice(1, -1).join(" ");
     if (!target || !(rate > 0)) throw new Error('Usage: sbp generate factory <item> <rate per minute> (--session <name> | --out-dir <path>)');
-    const result = generateFactory(loadGameData(), { target, rate, recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole") });
+    const result = generateFactory(loadGameData(), { target, rate, recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole"), style: flag("style") });
     console.log(`${result.report}\n`);
     blueprint = result.blueprint;
   } else if (kind === "power-plant") {
@@ -226,7 +232,7 @@ function cmdGenerate(root: string, args: Args): void {
     if (!(megawatts > 0)) throw new Error("Usage: sbp generate power-plant <MW> [--generator <name>] [--fuel <item>] [--net] (--session <name> | --out-dir <path>)");
     const result = generatePowerPlant(loadGameData(), {
       megawatts, generator: flag("generator") ?? "Fuel-Powered Generator", fuel: flag("fuel") ?? "Fuel", net: args.flags.net === true,
-      recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole"),
+      recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole"), style: flag("style"),
     });
     console.log(`${result.report}
 `);

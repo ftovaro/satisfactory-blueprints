@@ -7,10 +7,12 @@ import { PlanOptions, Step, fmt, machineClocks, plan } from "../planner/plan.js"
 import { MACHINES } from "../data/machines.js";
 import { CELL, DIRS, Dir, Grid, LEVEL, Route, Start, Step as GridStep, perpendicular } from "../layout/grid.js";
 import { Branch, buildRoute } from "../layout/route-builder.js";
-import { BuiltRow, LineKind, PreparedRow, beltType, buildRow, libraryFor, liftType, pipeType, prepareRow } from "./machine-row.js";
+import { BuiltRow, LineKind, PreparedRow, beltType, buildRow, liftType, pipeType, prepareRow } from "./machine-row.js";
 import { rowOptionsFor } from "./row-options.js";
 import { iconFor } from "../data/icons.js";
 import { buildShell } from "../layout/shell.js";
+import { KITS, StyleKit } from "../layout/styles.js";
+import { TemplateLibrary, loadTemplates } from "../templates.js";
 
 /**
  * A complete factory in one blueprint: every production step of the target item, stacked in floors,
@@ -41,6 +43,8 @@ export interface FactoryOptions extends PlanOptions {
   rate: number;
   name?: string;
   pole?: number;
+  /** Building style (src/layout/styles.ts); by default one is picked from the product. */
+  style?: string;
   /** Burn the target in generators instead of exporting it (a power plant). */
   power?: { generator: Generator; fuel: Item; megawatts: number; fuelPerGenerator: number };
 }
@@ -54,6 +58,7 @@ export interface PowerPlantOptions extends PlanOptions {
   net?: boolean;
   name?: string;
   pole?: number;
+  style?: string;
 }
 
 /** Pipeline Pump Mk1 power (game Docs). */
@@ -342,7 +347,25 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     if (f.sinks.length > 1) required.add(f.kind === "belt" ? "Build_ConveyorAttachmentSplitter_C" : "Build_PipelineJunction_Cross_C");
     if (f.kind === "pipe" && f.liquid) required.add("Build_PipelinePump_C").add(PUMP_POLE);
   }
-  const b = new BlueprintBuilder(libraryFor(rows.map((r) => r.row), [...required]));
+  // The building's style: a kit picked from the product name (or by --style), among those whose
+  // pieces exist in one template version together with everything else the factory needs.
+  const base = [...new Set([...rows.flatMap((r) => [...r.row.required]), ...required])];
+  const catalog = loadTemplates();
+  const has = (lib: TemplateLibrary, type: string) => Object.keys(lib.types).some((k) => k.endsWith(`.${type}`));
+  const essentials = (k: StyleKit) => [k.wall, k.window, k.door, k.roof, k.floor];
+  const seed = [...(options.power ? `${options.power.fuel.name} power` : production.target.item.name)].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
+  const kits = options.style
+    ? KITS.filter((k) => k.name.toLowerCase() === options.style!.toLowerCase())
+    : KITS.map((_, i) => KITS[(i + seed) % KITS.length]);
+  if (kits.length === 0) throw new Error(`Unknown style "${options.style}". Styles: ${KITS.map((k) => k.name).join(", ")}.`);
+  let kit: StyleKit | undefined;
+  let library: TemplateLibrary | undefined;
+  for (const k of kits) {
+    library = catalog.versions.find((lib) => base.every((t) => has(lib, t)) && essentials(k).every((list) => list.some((t) => has(lib, t))));
+    if (library) { kit = k; break; }
+  }
+  if (!kit || !library) throw new Error(`No template version has every piece of the ${kits.map((k) => k.name).join(" / ")} style(s) together with this factory's machines. Add a blueprint with them and run "sbp learn".`);
+  const b = new BlueprintBuilder(library);
 
   // What is over a floor: the next floor up (a full slab), else the roof.
   const levels = [...new Set(floorZ.filter((z) => z > 0))].sort((a, c) => a - c);
@@ -616,12 +639,9 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     minX: origin.x - CELL / 2, maxX: origin.x + (size.nx - 0.5) * CELL,
     minY: origin.y - CELL, maxY: origin.y + size.ny * CELL,
   };
-  // A style picked from the product name, so each factory looks a little different.
-  const style = [...production.target.item.name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
-
   // Upper floors: full slabs over the whole building, cut out where a tall row rises through, with a
   // Floor Hole wherever a lift or pipe crosses, and an opening by a side wall with a ladder up to it.
-  const floorType = b.pick(...(style % 2 ? ["Build_Foundation_Metal_8x1_C"] : []), FOUNDATION_TYPE)!;
+  const floorType = b.pick(...kit.floor, FOUNDATION_TYPE)!;
   const ladderType = b.pick("Build_Ladder_C");
   const liftHole = b.pick("Build_FoundationPassthrough_Lift_C");
   const pipeHole = b.pick("Build_FoundationPassthrough_Pipe_C");
@@ -693,7 +713,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     const inside = cells.filter((c) => grid.inside(c));
     return inside.length > 0 && inside.every((c) => grid.isFree(c));
   };
-  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })), doorway, style });
+  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })), doorway, kit, levels });
   if (shell.inlet) {
     const first = rows[0].poleTops![0];
     b.wire({ building: shell.inlet.pole, name: b.powerConnector(shell.inlet.pole), position: shell.inlet.position }, { building: first.pole, name: b.powerConnector(first.pole), position: first.position });
