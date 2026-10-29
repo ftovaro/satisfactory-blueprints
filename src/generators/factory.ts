@@ -327,11 +327,14 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   // Cell centers fall on multiples of CELL in x, so the first cell behind the rows (which end at
   // x = 0) is centered 4 m behind them and touches them.
   const origin = { x: bounds.minX, y: bounds.minY + CELL / 2, z: floorZ[0] + 100 };
-  // An even number of cells each way, so the walls around the grid tile in 8 m panels.
+  // Walls tile in 8 m panels. Along x the grid has an even number of cells. Along y it has an odd
+  // number, and the walls reach half a cell past it, so every other cell is centered on a panel: the
+  // ports use those cells, so belts pass through the middle of conveyor wall panels.
   const even = (n: number) => n + (n % 2);
+  const odd = (n: number) => n + 1 - (n % 2);
   const size = {
     nx: even(Math.ceil((bounds.maxX - bounds.minX) / CELL)),
-    ny: even(Math.ceil((bounds.maxY - bounds.minY) / CELL)),
+    ny: odd(Math.ceil((bounds.maxY - bounds.minY) / CELL)),
     // Routing levels stay at least 2 m under the roof.
     nz: Math.floor((roofZ - 200 - origin.z) / LEVEL) + 1,
   };
@@ -359,8 +362,9 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     return { i, j: Math.round((p.y - origin.y) / CELL), k: Math.round((p.z - origin.z) / LEVEL) };
   };
   const rowMinX = (r: PlacedRow) => extentOf(r).minX;
-  const edgeStarts = (): Start[] => Array.from({ length: size.ny }, (_, j) => ({ cell: { i: 0, j, k: 0 }, dir: 0 as Dir }));
-  const exportGoals = () => Array.from({ length: size.ny }, (_, j) => ({ cell: { i: size.nx - 1, j, k: 0 }, dir: 0 as Dir }));
+  const panelCells = Array.from({ length: (size.ny + 1) / 2 }, (_, n) => 2 * n);
+  const edgeStarts = (): Start[] => panelCells.map((j) => ({ cell: { i: 0, j, k: 0 }, dir: 0 as Dir }));
+  const exportGoals = () => panelCells.map((j) => ({ cell: { i: size.nx - 1, j, k: 0 }, dir: 0 as Dir }));
 
   // Route every flow; retry in other orders until everything fits.
   const routeAll = (order: Flow[]): { grid: Grid; lines: RoutedLine[] } | undefined => {
@@ -562,9 +566,17 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   // them, a flat roof above everything and a wall pole outside the back wall as the power inlet.
   const envelope = {
     minX: origin.x - CELL / 2, maxX: origin.x + (size.nx - 0.5) * CELL,
-    minY: origin.y - CELL / 2, maxY: origin.y + (size.ny - 0.5) * CELL,
+    minY: origin.y - CELL, maxY: origin.y + size.ny * CELL,
   };
-  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })) });
+  // The door goes where the ground cells just inside it are free (no line or machine in the way).
+  const doorway = (at: Vec3, inward: Vec3) => {
+    const along = vec(-inward.y, inward.x, 0);
+    const cells = [CELL / 2, CELL].flatMap((d) => [-CELL / 2, CELL / 2].map((s) =>
+      grid.cellAt(vec(at.x + inward.x * d + along.x * s, at.y + inward.y * d + along.y * s, origin.z))));
+    const inside = cells.filter((c) => grid.inside(c));
+    return inside.length > 0 && inside.every((c) => grid.isFree(c));
+  };
+  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })), doorway });
   if (shell.inlet) {
     const first = rows[0].poleTops![0];
     b.wire({ building: shell.inlet.pole, name: b.powerConnector(shell.inlet.pole), position: shell.inlet.position }, { building: first.pole, name: b.powerConnector(first.pole), position: first.position });
