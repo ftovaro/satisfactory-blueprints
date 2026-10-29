@@ -69,7 +69,7 @@ npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --o
 | Option      | Meaning                                                                 |
 |-------------|-------------------------------------------------------------------------|
 | `--rate`    | target output per minute; sizes the row with the planner (needs `--recipe`, any recipe name) |
-| `--machine` | `constructor` or `smelter` (with `--count`)                             |
+| `--machine` | `constructor`, `smelter`, `assembler`, `foundry` or `manufacturer` (with `--count`) |
 | `--count`   | number of machines in the row, all at 100%                              |
 | `--recipe`  | recipe, e.g. `Iron Plate`, `Cast Screws`, `IngotIron` (or a full recipe path) |
 | `--belt`    | conveyor tier 1-6 (default: the slowest tier that carries the flow with `--rate`, otherwise 1) |
@@ -79,7 +79,7 @@ npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --o
 | `--name`    | blueprint name (default describes the contents)                         |
 | `--force`   | overwrite an existing blueprint with the same name                      |
 
-Layout: machines face the same direction, a line of splitters feeds their inputs and a line of mergers collects their outputs. Connect your supply belt to the left end of the splitter line and take the products from the right end of the merger line. Power poles sit between the machines; connect any of them to your grid. After placing the blueprint in-game, you can open it in the Blueprint Designer and re-save it so the game recalculates its cost.
+Layout: machines face the same direction, a line of splitters feeds each input and a line of mergers collects the output. Connect your supply belts to the left end of the splitter lines and take the products from the right end of the merger line. Machines with several inputs (Assembler, Foundry, Manufacturer) get one manifold per input, stacked 4 m apart; the upper ones drop into the machines through Conveyor Lifts. With `--rate`, every belt segment gets the slowest tier that carries its flow: the input lines get slower toward their far end and the output line faster toward its exit. The command prints which belt tier each supply line needs. Power poles sit between the machines; connect any of them to your grid. After placing the blueprint in-game, you can open it in the Blueprint Designer and re-save it so the game recalculates its cost.
 
 ### How generation works
 
@@ -124,7 +124,7 @@ Buildings:
 2. ~~Learn connector positions from real blueprints~~
 3. Generate simple modules (a row of machines with input/output manifolds and power): first version done, in-game testing pending
 4. ~~Recipe and ratio planner from the game's own data~~
-5. Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts
+5. ~~Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts~~ (in-game testing pending)
 6. Full production lines (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
 
 ## Safety notes

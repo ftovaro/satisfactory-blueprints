@@ -13,7 +13,7 @@ import { GENERATED_MARKER } from "./builder.js";
 import { GAME_DATA_FILE, findItem, findRecipe as findGameRecipe, loadGameData, pickTier, recipesFor } from "./gamedata/index.js";
 import { findDocsFile, importGameData } from "./gamedata/import.js";
 import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
-import { MachineRowOptions } from "./generators/machine-row.js";
+import { MachineRowOptions, planBelts } from "./generators/machine-row.js";
 import { MACHINES } from "./data/machines.js";
 import { formatPlan } from "./planner/format.js";
 
@@ -229,24 +229,35 @@ function rowFromRate(recipeQuery: string | undefined, rate: number, belt: number
   const spec = Object.values(MACHINES).find((m) => m.type === recipe.machine);
   if (!spec) throw new Error(`"${recipe.name}" runs in a ${data.machines[recipe.machine].name}; rows support: ${Object.keys(MACHINES).join(", ")}.`);
 
-  const product = recipe.outputs[0].item;
-  const scale = rate / perMinute(recipe, product, "outputs");
-  const clocks = machineClocks(rate, perMinute(recipe, product, "outputs"));
-  // The main lines carry the whole input and output flow.
-  const mainFlow = Math.max(...[...recipe.inputs.map((f) => perMinute(recipe, f.item, "inputs")), ...recipe.outputs.map((f) => perMinute(recipe, f.item, "outputs"))].map((r) => r * scale));
-  const tier = pickTier(data.belts, mainFlow);
-  if (!tier && belt === undefined) throw new Error(`${fmt(mainFlow)}/min is more than one belt can carry; split the request into several rows.`);
-  const autoBelt = tier ? Number(tier.className.match(/Mk(\d)/)![1]) : undefined;
+  const fluids = [...recipe.inputs, ...recipe.outputs].filter((f) => data.items[f.item].form !== "solid");
+  if (fluids.length > 0) throw new Error(`"${recipe.name}" uses fluids (${fluids.map((f) => data.items[f.item].name).join(", ")}); fluid rows are not supported yet.`);
+  if (recipe.outputs.length !== 1) throw new Error(`"${recipe.name}" has ${recipe.outputs.length} outputs; rows support one output.`);
 
-  console.log(`${spec.key}: ${clocks.length} machine(s), clocks ${clocks.map((c) => `${fmt(c * 100)}%`).join(", ")}; main belts carry up to ${fmt(mainFlow)}/min -> Mk${belt ?? autoBelt}\n`);
-  return {
+  const product = recipe.outputs[0].item;
+  const clocks = machineClocks(rate, perMinute(recipe, product, "outputs"));
+  const options: RowOptions = {
     machine: spec.key,
     count: clocks.length,
     clocks,
     recipe: recipe.path,
     label: `${fmt(rate)} ${data.items[product].name}`,
-    belt: belt ?? autoBelt,
+    inputCount: recipe.inputs.length,
+    inputLabels: recipe.inputs.map((f) => data.items[f.item].name),
+    belt,
+    inputPerMachine: recipe.inputs.map((f) => clocks.map((c) => perMinute(recipe, f.item, "inputs") * c)),
+    outputPerMachine: clocks.map((c) => perMinute(recipe, product, "outputs") * c),
+    beltSpeeds: data.belts.map((t) => t.perMinute),
   };
+
+  const belts = planBelts(clocks.length, recipe.inputs.length, options);
+  const tiers = (list: number[]) => list.map((t) => `Mk${t}`).join(" ") || "-";
+  console.log(`${spec.key}: ${clocks.length} machine(s), clocks ${clocks.map((c) => `${fmt(c * 100)}%`).join(", ")}`);
+  belts.inputs.forEach((line, i) => {
+    const level = i === 0 ? "ground" : `level ${i}, via lifts`;
+    console.log(`  ${options.inputLabels![i]} (${level}): supply Mk${line.end} -> line ${tiers(line.chain)}, feeders ${tiers(line.feeders)}`);
+  });
+  console.log(`  ${data.items[product].name}: feeders ${tiers(belts.output.feeders)} -> line ${tiers(belts.output.chain)} -> exit Mk${belts.output.end}\n`);
+  return options;
 }
 
 function cmdImportGameData(args: Args): void {

@@ -28,6 +28,10 @@ export const MACHINES: Record<string, MachineSpec> = {
     pitch: 800,
     recipes: Object.fromEntries(["IngotIron", "IngotCopper", "IngotCaterium"].map((name) => [name, recipe("Smelter", name)])),
   },
+  // Multi-input machines: pick recipes through the game data (generate row --rate --recipe "<name>").
+  assembler: { key: "assembler", type: "Build_AssemblerMk1_C", pitch: 1200, recipes: {} },
+  foundry: { key: "foundry", type: "Build_FoundryMk1_C", pitch: 1200, recipes: {} },
+  manufacturer: { key: "manufacturer", type: "Build_ManufacturerMk1_C", pitch: 2000, recipes: {} },
 };
 
 export function findMachine(key: string): MachineSpec {

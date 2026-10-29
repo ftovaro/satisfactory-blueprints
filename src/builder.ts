@@ -103,6 +103,36 @@ export class BlueprintBuilder {
     return belt;
   }
 
+  /**
+   * Places a conveyor lift that carries items straight down by `height` cm. Items enter at `top`
+   * moving in direction `travelYaw` (degrees, 0 = +X) and leave at the bottom moving the same way.
+   *
+   * Learned from real blueprints: the lift's transform sits at its input end, `mTopTransform` holds
+   * the other end relative to it, and both belt connectors lie on the lift's vertical axis. An
+   * unrotated far end makes items U-turn (enter and leave on the same side), so the bottom end is
+   * rotated 180° to make them pass straight through.
+   */
+  liftDown(type: string, top: Vec3, height: number, travelYaw: number): { lift: Placed; input: Vec3; output: Vec3 } {
+    // The input connector accepts items moving along the lift's local -X axis.
+    const lift = this.place(type, transform(top, travelYaw + 180));
+    const props = lift.entity.properties as any;
+    delete props.mIsReversed;
+    const struct = (name: string, structType: string, value: unknown) => ({
+      type: "StructProperty",
+      name,
+      propertyTagType: { name: "StructProperty", children: [{ name: structType, children: [] }] },
+      value,
+    });
+    props.mTopTransform = struct("mTopTransform", "Transform", {
+      type: "Transform",
+      properties: {
+        Rotation: struct("Rotation", "Quat", { x: 0, y: 0, z: 1, w: 0 }),
+        Translation: struct("Translation", "Vector", { x: 0, y: 0, z: -height }),
+      },
+    });
+    return { lift, input: top, output: vec(top.x, top.y, top.z - height) };
+  }
+
   /** Connects two belt connectors to each other (both sides store the link). */
   link(a: ConnectorRef, b: ConnectorRef): void {
     const ca = this.component(a);
