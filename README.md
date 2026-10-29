@@ -156,11 +156,11 @@ Buildings:
 
 1. ~~Read, inspect and round-trip blueprints~~
 2. ~~Learn connector positions from real blueprints~~
-3. Generate simple modules (a row of machines with input/output manifolds and power): first version done, in-game testing pending
+3. ~~Generate simple modules (a row of machines with input/output manifolds and power)~~ (verified in-game)
 4. ~~Recipe and ratio planner from the game's own data~~
-5. ~~Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts~~ (in-game testing pending)
+5. ~~Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts~~ (verified in-game)
 6. ~~Full production lines stacked in floors~~ (in-game testing pending; next: one input belt per raw material, fluid steps)
-7. Building shells, colors and signs (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
+7. Building shells, colors and signs
 
 ## Safety notes
 
