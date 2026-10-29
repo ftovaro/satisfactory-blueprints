@@ -1,4 +1,4 @@
-# satisfactory-blueprints
+﻿# satisfactory-blueprints
 
 A command-line toolkit for working with [Satisfactory](https://www.satisfactorygame.com/) blueprint files (`.sbp` / `.sbpcfg`).
 
@@ -24,7 +24,7 @@ Parsing and serialization are powered by [`@etothepii/satisfactory-file-parser`]
 ## Installation
 
 ```bash
-git clone https://github.com/<your-user>/satisfactory-blueprints.git
+git clone https://github.com/ftovaro/satisfactory-blueprints.git
 cd satisfactory-blueprints
 npm install
 ```
