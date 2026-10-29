@@ -53,13 +53,14 @@ const ROW_GAP = 800;
 /** Head room (cm) above the tallest thing on a floor; floors are a whole number of 4 m walls. */
 const HEADROOM = 150;
 const WALL = 400;
-/** Lanes start this far outside the slabs, are spaced this far apart, and flows are separated by a wider gap. */
-const LANE_MARGIN = 900;
-const LANE_SPACING = 600;
-const FLOW_GAP = 1200;
+/** Lanes start this far outside the slabs and are spaced this far apart (belts, lifts and pipes are 2 m wide). */
+const LANE_MARGIN = 600;
+const LANE_SPACING = 400;
+/** A flow's column sits this far outside its outermost lane: room to turn north and then east again. */
+const COLUMN_OFFSET = 700;
 /** Fan lines run north of the lifts, this far apart. */
-const FAN_MARGIN = 900;
-const FAN_SPACING = 600;
+const FAN_MARGIN = 600;
+const FAN_SPACING = 400;
 /** Horizontal hop (cm) between chained lifts. */
 const ZIG = 300;
 /** Radius (cm) of every 90° belt turn. */
@@ -83,7 +84,7 @@ const POLE_HEIGHT = 400;
 /** Ground-level pipes (raw fluids and exported fluids) run at a machine pipe connector's height. */
 const GROUND_PIPE_Z = 175;
 /** Each exported product comes down on its own line, this far south of the previous one. */
-const EXPORT_STAGGER = 500;
+const EXPORT_STAGGER = 400;
 /** A vertical run that would cross an outer belt travels this much higher and drops back with a short lift. */
 const DETOUR = 200;
 
@@ -117,6 +118,8 @@ interface Flow {
   sinks: Sink[];
   /** Leaves the factory at ground level: the final product, or a byproduct nobody inside uses. */
   exported: boolean;
+  /** Goes straight from its row to its only consumer, one or more floors up (no fan line). */
+  direct?: boolean;
 }
 
 /** Turns, straight runs and vertical moves for one kind of line (belts or pipes) at one tier. */
@@ -275,6 +278,13 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     return { ...port.point, position: port.global } as ConnectorRef & { position: Vec3 };
   };
 
+  // A product with one consumer on a higher floor can go straight there; the climb turns it back.
+  for (const flow of flows) {
+    if (!flow.source || flow.exported || flow.sinks.length !== 1) continue;
+    const rise = flow.sinks[0].entry!.position.z - exitOf(flow).position.z;
+    flow.direct = rise >= (flow.kind === "belt" ? WALL : TURN_RADIUS * 2 + 100);
+  }
+
   // Lane order: search for the arrangement with the fewest same-height crossings (see file comment).
   const { order, detours } = chooseLaneOrder(flows, exitOf);
   const exported = order.filter((f) => f.exported);
@@ -287,15 +297,14 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
       laneX.set(sink, -x);
       x += LANE_SPACING;
     }
-    if (flow.source && !flow.exported) {
-      columnX.set(flow, -(x - LANE_SPACING + TURN_RADIUS * 2 + 200));
-      x += TURN_RADIUS * 2 + 200;
+    if (needsFan(flow) && flow.source) {
+      columnX.set(flow, -(x - LANE_SPACING + COLUMN_OFFSET));
+      x += COLUMN_OFFSET;
     }
-    x += FLOW_GAP;
   }
   // Fan lines north of the lifts: raw materials farthest, inner flows farther than outer ones.
   const fanY = new Map<Flow, number>();
-  const fans = order.filter((f) => !f.exported);
+  const fans = order.filter(needsFan);
   [...fans.filter((f) => f.source).reverse(), ...fans.filter((f) => !f.source).reverse()].forEach((f, i) => fanY.set(f, yLane + FAN_MARGIN + i * FAN_SPACING));
   const outer = Math.max(x, Math.max(slab.y, ...fanY.values()) + FAN_MARGIN);
   const half = Math.ceil((outer + FOUNDATION) / FOUNDATION) * FOUNDATION;
@@ -413,10 +422,10 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
    * run climbs DETOUR higher, runs south above what it would cross, and drops back just before
    * turning into the row.
    */
-  const laneToRow = (c: Conduit, start: BeltEnd, entry: BeltEnd, detour: boolean) => {
+  const laneToRow = (c: Conduit, start: BeltEnd, entry: BeltEnd, detour: boolean, arriving = Y(-1)) => {
     const runZ = entry.position.z + (detour ? DETOUR : 0);
     const rise = runZ - start.position.z;
-    let end = Math.abs(rise) < c.minRise ? start : c.vertical(start, rise, Y(-1), Y(-1));
+    let end = Math.abs(rise) < c.minRise ? start : c.vertical(start, rise, arriving, Y(-1));
     if (detour) {
       end = c.straight(end, vec(end.position.x, entry.position.y + TURN_RADIUS + ZIG, runZ));
       // Belts drop back with a short lift; pipes simply slope down in the last stretch.
@@ -435,17 +444,37 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     const groundZ = flow.kind === "belt" ? GROUND_BELT_Z : GROUND_PIPE_Z;
     let end: BeltEnd = c.straight(exit, vec(lx + TURN_RADIUS, exit.position.y, exit.position.z));
     end = c.turn(end, X(-1), Y(1));
-    end = c.straight(end, vec(lx, y, exit.position.z));
     const drop = groundZ - exit.position.z;
-    if (-drop >= c.minRise) end = c.vertical(end, drop, Y(1), X(-1));
-    else {
-      end = c.straight(end, vec(lx, y + TURN_RADIUS, exit.position.z));
-      end = c.turn(end, Y(1), X(-1));
-    }
+    // Turning west (or a pipe curving into its vertical run) moves one turn radius forward; stop short
+    // so the run toward the edge stays on y. A belt lift turns in place.
+    const lifts = -drop >= c.minRise;
+    end = c.straight(end, vec(lx, y - (c.kind === "pipe" || !lifts ? TURN_RADIUS : 0), exit.position.z));
+    end = lifts ? c.vertical(end, drop, Y(1), X(-1)) : c.turn(end, Y(1), X(-1));
     c.straight(end, vec(-half, end.position.y, groundZ));
   });
 
-  for (const flow of order.filter((f) => !f.exported)) {
+  // A product with a single consumer goes straight to that consumer's lane: out of its row, north to
+  // the lane, up, and into the consumer row. No column or fan line needed.
+  for (const flow of order.filter((f) => !f.exported && !needsFan(f))) {
+    const sink = flow.sinks[0];
+    const lx = laneX.get(sink)!;
+    const exit = exitOf(flow);
+    const c = conduitFor(flow, flow.perMinute);
+    let end: BeltEnd;
+    if (detours.has(flow) && c.kind === "belt") {
+      end = c.straight(exit, vec(lx, exit.position.y, exit.position.z));
+      end = c.vertical(end, DETOUR, X(-1), Y(1));
+    } else {
+      end = c.straight(exit, vec(lx + TURN_RADIUS, exit.position.y, exit.position.z));
+      end = c.turn(end, X(-1), Y(1));
+      if (detours.has(flow)) end = c.straight(end, vec(lx, end.position.y + ZIG, end.position.z + DETOUR));
+    }
+    end = c.straight(end, vec(lx, yLane, end.position.z));
+    // Arriving northbound, the climb turns the flow back south (a lift U-turn, or a pipe curve).
+    laneToRow(c, end, sink.entry!, detours.has(sink), Y(1));
+  }
+
+  for (const flow of order.filter(needsFan)) {
     const sinks = sortSinks(flow);
     // Bring the flow to the west end of its fan line (moving east, at the fan's y and the source height).
     const y = fanY.get(flow)!;
@@ -540,6 +569,11 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   return { blueprint, report };
 }
 
+/** Raw materials and products with several consumers use a fan line; a single consumer is reached directly. */
+function needsFan(flow: Flow): boolean {
+  return !flow.exported && !flow.direct;
+}
+
 /** Consumers of a flow from the building outward: the northernmost entry closest to the building. */
 function sortSinks(flow: Flow): Sink[] {
   return [...flow.sinks].sort((a, c) => (c.entry?.position.y ?? -Infinity) - (a.entry?.position.y ?? -Infinity));
@@ -557,14 +591,18 @@ function chooseLaneOrder(flows: Flow[], exitOf: (flow: Flow) => { position: Vec3
   const exportedFlows = flows.filter((f) => f.exported);
   const others = flows.filter((f) => !f.exported);
   /** A lane (a consumer) or a source column: its horizontal leg and its vertical run start at the same row point. */
-  type Element = { key: Sink | Flow; y: number; z: number };
+  type Element = { key: Sink | Flow; y: number; z: number; sameLane?: boolean };
   const elementsOf = (flow: Flow): Element[] => {
     const lanes: Element[] = sortSinks(flow).map((s) => (s.entry
       ? { key: s, y: s.entry.position.y, z: s.entry.position.z }
       : { key: s, y: -Infinity, z: -Infinity }));
-    if (flow.source && !flow.exported) {
+    if (flow.source && needsFan(flow)) {
       const exit = exitOf(flow).position;
       lanes.push({ key: flow, y: exit.y, z: exit.z });
+    } else if (flow.direct) {
+      // Direct flow: its single lane also carries the run up from the exit.
+      const exit = exitOf(flow).position;
+      lanes.push({ key: flow, y: exit.y, z: exit.z, sameLane: true });
     } else if (flow.exported) {
       const exit = exitOf(flow).position;
       lanes[0] = { key: lanes[0].key, y: exit.y, z: exit.z };
@@ -577,6 +615,7 @@ function chooseLaneOrder(flows: Flow[], exitOf: (flow: Flow) => { position: Vec3
     const hit = new Set<Sink | Flow>();
     for (let i = 0; i < elements.length; i++) {
       for (let j = i + 1; j < elements.length; j++) {
+        if (elements[j].sameLane && j === i + 1) continue; // two runs of the same lane
         if (Math.abs(elements[j].z - elements[i].z) < 200 && elements[j].y > elements[i].y) hit.add(elements[i].key);
       }
     }
