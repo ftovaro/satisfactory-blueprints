@@ -75,6 +75,19 @@ export class BlueprintBuilder {
     };
   }
 
+  /** Sets a machine's clock speed as a fraction (1 = 100%). Values above 1 need Power Shards in-game. */
+  setClock(machine: Placed, fraction: number): void {
+    if (!(fraction > 0 && fraction <= 2.5)) throw new Error(`Clock speed must be between 0 and 250%, got ${fraction * 100}%.`);
+    for (const name of ["mPendingPotential", "mCurrentPotential"]) {
+      (machine.entity.properties as any)[name] = {
+        type: "FloatProperty",
+        name,
+        propertyTagType: { name: "FloatProperty", children: [] },
+        value: fraction,
+      };
+    }
+  }
+
   /** Places a straight conveyor belt from an output connector to an input connector. */
   belt(type: string, from: ConnectorRef & { position: Vec3 }, to: ConnectorRef & { position: Vec3 }): Placed {
     const delta = sub(to.position, from.position);

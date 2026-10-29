@@ -42,7 +42,11 @@ const DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 export const TEMPLATE_FILE = path.join(DATA_DIR, "templates.json");
 
 /** Properties that only make sense for the original object and must not be copied. */
-const DROPPED_PROPERTIES = ["mBuildTimeStamp", "mBlueprintProxy", "mCurrentRecipe", "mDidFirstTimeUse", "mTimeSinceStartStopProducing"];
+// The clock speed (potential) of the source machine must not leak into generated machines.
+const DROPPED_PROPERTIES = [
+  "mBuildTimeStamp", "mBlueprintProxy", "mCurrentRecipe", "mDidFirstTimeUse", "mTimeSinceStartStopProducing",
+  "mPendingPotential", "mCurrentPotential", "mPendingProductionBoost", "mCurrentProductionBoost",
+];
 
 // JSON cannot hold BigInt or -0; tag them so templates survive a save/load cycle unchanged.
 const replacer = (_key: string, value: unknown) => {
