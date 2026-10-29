@@ -63,20 +63,21 @@ const FOUNDATION = 800;
 const FOUNDATION_TYPE = "Build_Foundation_Concrete_8x1_C";
 /** Slab thickness (cm); machines stand on its top. */
 const SLAB = 100;
-/** Gap (cm) between rows on the same floor: two cells, so lines can rise between them. */
-const ROW_GAP = CELL;
 /** Head room (cm) above the tallest thing on a floor; floors are a whole number of 4 m walls. */
-const HEADROOM = 150;
+const HEADROOM = 0;
 const WALL = 400;
 /**
  * Free space around the rows for routing: behind (where rows connect), in front, and to the sides.
  * The tightest that routes wins; a little overlap between pieces is preferred to a bigger building.
  */
-interface Margins { back: number; front: number; side: number }
+interface Margins { back: number; front: number; side: number; rowGap: number; pad: number }
 const MARGINS: Margins[] = [
-  { back: 2 * CELL, front: 0, side: 0 },
-  { back: 2 * CELL, front: CELL, side: CELL },
-  { back: 3 * CELL, front: 2 * CELL, side: 2 * CELL },
+  // Rows touching, lines allowed to graze machines and manifolds: overlaps are fine, size is not.
+  { back: CELL, front: 0, side: 0, rowGap: 0, pad: 0 },
+  { back: 2 * CELL, front: 0, side: 0, rowGap: 0, pad: 0 },
+  { back: 2 * CELL, front: 0, side: 0, rowGap: CELL, pad: 150 },
+  { back: 2 * CELL, front: CELL, side: CELL, rowGap: CELL, pad: 150 },
+  { back: 3 * CELL, front: 2 * CELL, side: 2 * CELL, rowGap: CELL, pad: 150 },
 ];
 const NO_ROUTE = "Could not route every connection";
 /** One Conveyor Lift is at most about 48 m tall. */
@@ -268,20 +269,20 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
       r.x = r.row.extent.maxX;
       const e = extentOf({ ...r, y: 0 });
       r.y = cursor - e.minY;
-      cursor = r.y + e.maxY + ROW_GAP;
+      cursor = r.y + e.maxY + margins.rowGap;
     }
     return cursor;
   };
   for (const floor of floors) {
     const short = floor.filter((r) => !tall(r));
-    const shift = (stack(short, 0) - ROW_GAP) / 2;
+    const shift = (stack(short, 0) - margins.rowGap) / 2;
     for (const r of short) r.y -= shift;
   }
   const shortRows = rows.filter((r) => !tall(r));
   const tallRows = rows.filter(tall);
-  if (shortRows.length > 0) stack(tallRows, Math.max(...shortRows.map((r) => extentOf(r).maxY)) + ROW_GAP);
+  if (shortRows.length > 0) stack(tallRows, Math.max(...shortRows.map((r) => extentOf(r).maxY)) + margins.rowGap);
   else {
-    const shift = (stack(tallRows, 0) - ROW_GAP) / 2;
+    const shift = (stack(tallRows, 0) - margins.rowGap) / 2;
     for (const r of tallRows) r.y -= shift;
   }
   // Floor heights follow the short rows only; a floor of tall rows only adds no height.
@@ -400,7 +401,8 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     const grid = new Grid(origin, size);
     rows.forEach((r) => {
       const e = extentOf(r);
-      grid.blockBox({ minX: e.minX - 150, maxX: e.maxX + 150, minY: e.minY - 150, maxY: e.maxY + 150, minZ: floorZ[r.floor] - SLAB, maxZ: floorZ[r.floor] + r.row.height });
+      const pad = margins.pad;
+      grid.blockBox({ minX: e.minX - pad, maxX: e.maxX + pad, minY: e.minY - pad, maxY: e.maxY + pad, minZ: floorZ[r.floor] - SLAB, maxZ: floorZ[r.floor] + r.row.height });
       // Hanging poles keep lines out of the cell under them.
       for (const p of r.poleTops!.filter((t) => t.hanging)) {
         grid.blockBox({ minX: p.position.x - CELL / 2, maxX: p.position.x + CELL / 2, minY: p.position.y - CELL / 2, maxY: p.position.y + CELL / 2, minZ: p.position.z - LEVEL, maxZ: p.position.z });
@@ -495,7 +497,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   };
   for (const flow of flows) {
     for (const sink of flow.sinks) {
-      if (sink.row && !probe.isFree(portCell(sink.entry!.position, rowMinX(sink.row)))) throw new Error(`No room to reach ${sink.row.step.product.name}'s ${flow.label} input.`);
+      if (sink.row && !probe.isFree(portCell(sink.entry!.position, rowMinX(sink.row)))) throw new Error(`${NO_ROUTE}: no room to reach ${sink.row.step.product.name}'s ${flow.label} input.`);
     }
   }
   // Flows with the longest climbs first; then shuffled orders until one routes completely.
