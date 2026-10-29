@@ -70,6 +70,14 @@ const INPUT_COLOR = { r: 0.98, g: 0.45, b: 0.05, a: 1 };
 const OUTPUT_COLOR = { r: 0.15, g: 0.85, b: 0.3, a: 1 };
 const ROW_COLOR = { r: 0.9, g: 0.9, b: 0.9, a: 1 };
 const FLOW_TO_FRONT_YAW = -90;
+/**
+ * Rows taller than this (refineries, blenders) do not set their floor's height: they stand in a band
+ * of their own beside the stacked floors and rise through them, so short rows are not spread over
+ * tall floors.
+ */
+const TALL_ROW = 1300;
+/** Row poles hang from a ceiling (a slab or the roof) at most this high above their floor. */
+const MAX_HANG = 2000;
 
 interface PlacedRow {
   step: Step;
@@ -79,7 +87,7 @@ interface PlacedRow {
   x: number;
   y: number;
   ports?: (BuiltRow["ports"][number] & { global: Vec3 })[];
-  poleTops?: { pole: Placed; position: Vec3 }[];
+  poleTops?: { pole: Placed; position: Vec3; hanging: boolean }[];
 }
 
 /** One consumer of a flow: a row input, or (for exported products) the front edge. */
@@ -148,28 +156,43 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   const floors = Array.from({ length: Math.max(...rows.map((r) => r.floor)) + 1 }, (_, f) => rows.filter((r) => r.floor === f));
 
   // Placement: turned rows (yaw 180 mirrors X and Y), connection ends aligned at x = 0, stacked in y.
+  // Tall rows go side by side in a band past the other rows' side.
   const extentOf = (r: PlacedRow) => {
     const e = r.row.extent;
     return { minX: r.x - e.maxX, maxX: r.x - e.minX, minY: r.y - e.maxY, maxY: r.y - e.minY };
   };
-  for (const floor of floors) {
-    let cursor = 0;
-    for (const r of floor) {
+  const tall = (r: PlacedRow) => r.row.height > TALL_ROW;
+  const stack = (list: PlacedRow[], from: number) => {
+    let cursor = from;
+    for (const r of list) {
       r.x = r.row.extent.maxX;
       const e = extentOf({ ...r, y: 0 });
       r.y = cursor - e.minY;
       cursor = r.y + e.maxY + ROW_GAP;
     }
-    const shift = (cursor - ROW_GAP) / 2;
-    for (const r of floor) r.y -= shift;
+    return cursor;
+  };
+  for (const floor of floors) {
+    const short = floor.filter((r) => !tall(r));
+    const shift = (stack(short, 0) - ROW_GAP) / 2;
+    for (const r of short) r.y -= shift;
   }
+  const shortRows = rows.filter((r) => !tall(r));
+  const tallRows = rows.filter(tall);
+  if (shortRows.length > 0) stack(tallRows, Math.max(...shortRows.map((r) => extentOf(r).maxY)) + ROW_GAP);
+  else {
+    const shift = (stack(tallRows, 0) - ROW_GAP) / 2;
+    for (const r of tallRows) r.y -= shift;
+  }
+  // Floor heights follow the short rows only; a floor of tall rows only adds no height.
   const floorZ: number[] = [];
   let z = SLAB;
   for (const floor of floors) {
     floorZ.push(z);
-    z += Math.ceil((Math.max(...floor.map((r) => r.row.height)) + SLAB + HEADROOM) / WALL) * WALL;
+    const short = floor.filter((r) => !tall(r));
+    if (short.length > 0) z += Math.ceil((Math.max(...short.map((r) => r.row.height)) + SLAB + HEADROOM) / WALL) * WALL;
   }
-  const top = z;
+  const top = Math.max(z, ...rows.filter(tall).map((r) => floorZ[r.floor] + r.row.height + SLAB + HEADROOM));
   // The roof rests on the walls right above the last floor (floors are whole walls tall).
   const roofZ = Math.ceil(top / WALL) * WALL;
 
@@ -207,7 +230,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     if (!t) throw new Error(`${fmt(perMinute)}/min is more than one ${kind} carries; lower the rate or split the factory.`);
     return kind === "belt" ? Number(t.className.match(/Mk(\d)/)![1]) : /MK2/i.test(t.className) ? 2 : 1;
   };
-  const required = new Set<string>([FOUNDATION_TYPE, SIGN]);
+  const required = new Set<string>([FOUNDATION_TYPE, SIGN, options.pole === 2 ? "Build_PowerPoleWall_Mk2_C" : "Build_PowerPoleWall_C"]);
   for (const f of flows) {
     for (const rate of [f.perMinute, ...f.sinks.map((s) => s.perMinute)]) {
       const t = tierFor(f.kind, rate);
@@ -238,11 +261,26 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
       }
     }
   });
+  // What is over a spot of a floor: the lowest slab above that covers it, else the roof.
+  const ceilingOver = (f: number, x: number, y: number): number => {
+    for (let g = f + 1; g < floors.length; g++) {
+      if (floorZ[g] <= floorZ[f]) continue;
+      const covered = slabs[g].rows.some((e) => x >= slabs[g].minX && x <= e.maxX && y >= Math.floor(e.minY / FOUNDATION) * FOUNDATION && y <= e.maxY);
+      if (covered) return floorZ[g] - SLAB;
+    }
+    return roofZ;
+  };
   for (const r of rows) {
     b.withFrame(transform(vec(r.x, r.y, floorZ[r.floor]), ROW_YAW), () => {
-      const built = buildRow(b, r.row);
+      const built = buildRow(b, r.row, {
+        ceilingAt: (spot) => {
+          // The row frame is turned 180°.
+          const height = ceilingOver(r.floor, r.x - spot.x, r.y - spot.y) - floorZ[r.floor];
+          return height > r.row.height && height <= MAX_HANG ? height : undefined;
+        },
+      });
       r.ports = built.ports.map((p) => ({ ...p, global: b.toBlueprint(p.point.position) }));
-      r.poleTops = built.poles.map((p) => ({ pole: p.pole, position: b.toBlueprint(p.position) }));
+      r.poleTops = built.poles.map((p) => ({ pole: p.pole, position: b.toBlueprint(p.position), hanging: p.hanging }));
     });
   }
   for (const flow of flows) {
@@ -282,6 +320,10 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     rows.forEach((r) => {
       const e = extentOf(r);
       grid.blockBox({ minX: e.minX - 150, maxX: e.maxX + 150, minY: e.minY - 150, maxY: e.maxY + 150, minZ: floorZ[r.floor] - SLAB, maxZ: floorZ[r.floor] + r.row.height });
+      // Hanging poles keep lines out of the cell under them.
+      for (const p of r.poleTops!.filter((t) => t.hanging)) {
+        grid.blockBox({ minX: p.position.x - CELL / 2, maxX: p.position.x + CELL / 2, minY: p.position.y - CELL / 2, maxY: p.position.y + CELL / 2, minZ: p.position.z - LEVEL, maxZ: p.position.z });
+      }
     });
     floors.forEach((_, f) => {
       if (f === 0) return;

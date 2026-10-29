@@ -90,11 +90,11 @@ npm run sbp -- generate factory "Steel Beam" 15 --recipe "Steel Ingot=Solid Stee
 
 The whole production chain goes into one blueprint, built upward:
 
-- **Steps and floors:** one machine row per product (same manifolds as `generate row`), shared by every step that uses it. Steps fed only by raw materials are on the ground floor and every other step sits one floor above its highest solid ingredient. A step fed a fluid by another step stays on that step's floor when it can, so fluids rarely climb. Floors are 1 m concrete foundation slabs.
+- **Steps and floors:** one machine row per product (same manifolds as `generate row`), shared by every step that uses it. Steps fed only by raw materials are on the ground floor and every other step sits one floor above its highest solid ingredient. A step fed a fluid by another step stays on that step's floor when it can, so fluids rarely climb. Floors are 1 m concrete foundation slabs. Tall machines (Refineries, Blenders) do not set a floor's height: their rows stand in a band beside the stacked floors and rise through them.
 - **One input per raw material, one output per product:** each raw material enters through a single open belt or pipe end on the back edge at ground level. The final product, and any byproduct nothing inside uses (e.g. Heavy Oil Residue), leave through their own open ends on the front edge, in the direction of the placement arrow. Use Auto-Connect (R) to hook them up.
 - **Connections between steps:** routed in a 3D grid of 4 m cells around and between the rows (`src/layout/grid.ts`). Each connection takes the shortest path made of straight runs, 90° turns and vertical runs. Belts climb with Conveyor Lifts; pipes climb vertically, with a Pipeline Pump every 16 m when the fluid is a liquid. A product or raw material used by several rows branches off through a splitter (junction for pipes) placed on its existing line.
 - **No clashes by construction:** a grid cell holds one piece of one line, machines and slabs are blocked, and slabs only cover the rows so lines can rise in the gaps between them.
-- **Power:** all rows and pumps share one grid; connect any pole.
+- **Power:** all rows and pumps share one grid; connect the wall pole outside the back wall. Under a slab or the roof (up to 20 m above), row poles are Wall Power Poles hanging from the ceiling.
 - **Size:** large factories exceed the Blueprint Designer. The game still places them, but they cannot be edited in a designer.
 - **Not supported yet:** byproducts that are only partly used inside the factory (e.g. Silica in Aluminum production), because their surplus would need a Smart Splitter on overflow.
 

@@ -85,6 +85,10 @@ const LOOPBACK_OFFSET = 400;
 const LOOPBACK_MIN_MACHINES = 3;
 /** Approximate height (cm) where wires attach to a power pole. */
 const POLE_HEIGHT = 400;
+/** A Wall Power Pole turned so its +X points down hangs from a ceiling (as in real blueprints). */
+const HANGING = { x: 0, y: Math.SQRT1_2, z: 0, w: Math.SQRT1_2 };
+/** Where wires attach below a hanging pole's base (cm). */
+const HANGING_DROP = 30;
 const FOUNDATION = 800;
 /**
  * The row is laid out with the flow running along +X. The blueprint's front (its placement arrow)
@@ -247,11 +251,17 @@ export function prepareRow(options: MachineRowOptions): PreparedRow {
 export interface BuiltRow {
   /** Input ports are where supply must arrive (moving +X); output ports where products leave (moving +X). */
   ports: (Port & { label: string; level: number; spec: PortSpec })[];
-  poles: { pole: Placed; position: Vec3 }[];
+  /** `position` is where wires attach; `hanging` poles hang from a ceiling. */
+  poles: { pole: Placed; position: Vec3; hanging: boolean }[];
+}
+
+export interface BuildRowOptions {
+  /** Height (cm, in the row's frame) of a ceiling over a pole spot that poles may hang from, if any. */
+  ceilingAt?: (spot: Vec3) => number | undefined;
 }
 
 /** Places a prepared row in the builder's current frame: machines along X at y = 0 on z = 0. */
-export function buildRow(b: BlueprintBuilder, row: PreparedRow): BuiltRow {
+export function buildRow(b: BlueprintBuilder, row: PreparedRow, build: BuildRowOptions = {}): BuiltRow {
   const { spec, options, inputLines, outputLines } = row;
   const rowLength = (options.count - 1) * spec.pitch;
   const xOf = (i: number) => i * spec.pitch - rowLength / 2;
@@ -281,19 +291,24 @@ export function buildRow(b: BlueprintBuilder, row: PreparedRow): BuiltRow {
 
   // Power: one pole in the gap between each pair of machines, powering both of them, chained to the
   // next pole (4 connections at most, which a Mk1 pole supports). An odd last machine gets its pole on the right.
+  // Under a ceiling the pole is a Wall Power Pole of the same tier hanging from it.
   const poleType = `Build_PowerPoleMk${options.pole ?? 1}_C`;
+  const hangingType = b.pick((options.pole ?? 1) >= 2 ? "Build_PowerPoleWall_Mk2_C" : "Build_PowerPoleWall_C");
   const poles: BuiltRow["poles"] = [];
   for (let i = 0; i < machines.length; i += 2) {
     const pair = machines.slice(i, i + 2);
     const position = vec(xOf(i) + spec.pitch / 2, 0, 0);
-    const pole = b.place(poleType, transform(position));
-    const top = add(position, vec(0, 0, POLE_HEIGHT));
+    const ceiling = hangingType ? build.ceilingAt?.(position) : undefined;
+    const pole = ceiling !== undefined
+      ? b.place(hangingType!, { rotation: HANGING, translation: vec(position.x, position.y, ceiling), scale3d: vec(1, 1, 1) })
+      : b.place(poleType, transform(position));
+    const top = ceiling !== undefined ? vec(position.x, position.y, ceiling - HANGING_DROP) : add(position, vec(0, 0, POLE_HEIGHT));
     for (const machine of pair) {
       b.wire({ building: pole, name: b.powerConnector(pole), position: top }, { building: machine, name: b.powerConnector(machine), position: b.worldPoint(machine, vec(0, 0, 200)) });
     }
     const previous = poles[poles.length - 1];
     if (previous) b.wire({ building: previous.pole, name: b.powerConnector(previous.pole), position: previous.position }, { building: pole, name: b.powerConnector(pole), position: top });
-    poles.push({ pole, position: top });
+    poles.push({ pole, position: top, hanging: ceiling !== undefined });
   }
   return { ports, poles };
 }
