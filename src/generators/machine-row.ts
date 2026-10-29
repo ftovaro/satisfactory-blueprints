@@ -1,7 +1,7 @@
 import { Blueprint } from "@etothepii/satisfactory-file-parser";
 import { BlueprintBuilder, ConnectorRef, Placed } from "../builder.js";
 import { connector, connectorsOf } from "../connectors.js";
-import { Vec3, add, transform, vec } from "../geometry.js";
+import { Vec3, add, rotate, transform, vec, yaw as yawQuat } from "../geometry.js";
 import { MachineSpec, findMachine, findRecipe } from "../data/machines.js";
 import { selectLibrary } from "../templates.js";
 import type { ConnectorStats } from "../analysis/connectors.js";
@@ -58,6 +58,11 @@ export interface MachineRowOptions {
   speeds?: { belt: number[]; pipe: number[] };
   /** Force one conveyor tier (1-6) everywhere instead of sizing each segment. */
   belt?: number;
+  /**
+   * End of the row where supplies arrive: "west" (-X, the default; the product leaves at the other
+   * end) or "east" (+X, the same end the product leaves from, so all connections share one side).
+   */
+  inputFrom?: "west" | "east";
   /** Power pole tier 1-2. */
   pole?: number;
   name?: string;
@@ -192,8 +197,16 @@ export function prepareRow(options: MachineRowOptions): PreparedRow {
     const rank = (p: PortSpec) => (side === "input" ? (p.kind === "pipe" ? 0 : 1) : p.kind === "belt" ? 0 : 1);
     return rank(a.port) - rank(b.port);
   };
+  // Input lines fed from the east carry their flow westward, so size them on the reversed machine order.
+  const fromEast = options.inputFrom === "east";
+  const tiersFor = (side: "input" | "output", port: PortSpec): LineTiers => {
+    if (side === "output" || !fromEast || !port.perMachine) return planLine(options.count, side, port, options);
+    const t = planLine(options.count, side, { ...port, perMachine: [...port.perMachine].reverse() }, options);
+    return { feeders: [...t.feeders].reverse(), chain: [...t.chain].reverse(), end: t.end };
+  };
   const toLines = (side: "input" | "output", list: { port: PortSpec; connector: ConnectorStats }[]): Line[] =>
-    [...list].sort(order(side)).map((l, level) => ({ ...l, offset: local(l.connector), level, tiers: planLine(options.count, side, l.port, options) }));
+    [...list].sort(order(side)).map((l, level) => ({ ...l, offset: local(l.connector), level, tiers: tiersFor(side, l.port) }));
+  if (fromEast && inputs.some((i) => i.port.kind === "pipe")) throw new Error(`${spec.key}: pipe inputs fed from the east are not supported yet.`);
   const inputLines = toLines("input", inputs);
   const outputLines = toLines("output", outputs);
   if (outputLines.some((l) => l.port.kind === "belt" && l.level > 0)) throw new Error(`${spec.key}: more than one belt output is not supported.`);
@@ -259,6 +272,7 @@ export function buildRow(b: BlueprintBuilder, row: PreparedRow): BuiltRow {
     outFace: outputLines[0].offset.y,
     inStacked: inputLines.length > 1,
     outStacked: outputLines.length > 1,
+    fromEast: options.inputFrom === "east",
   };
   const tag = (line: Line, port: Port) => ({ ...port, label: line.port.label, level: line.level, spec: line.port });
   const ports = [
@@ -339,6 +353,8 @@ interface RowContext {
   outFace: number;
   inStacked: boolean;
   outStacked: boolean;
+  /** Input lines are fed from the east end and carry their flow westward. */
+  fromEast: boolean;
 }
 
 /** Where a line meets the outside world: the free end of its first (input) or last (output) attachment. */
@@ -359,10 +375,14 @@ function beltInputLine(ctx: RowContext, line: Line): Port {
   const lineY = inputLineY(ctx);
   const lineZ = BELT_HEIGHT + line.level * LEVEL_HEIGHT;
 
+  // Fed from the east, splitters are turned 180°: their machine-facing side output is then Output3.
+  const yaw = ctx.fromEast ? 180 : 0;
+  const at = (center: Vec3, name: string) => attachmentPoint(SPLITTER, center, name, yaw);
+  const side = ctx.fromEast ? "Output3" : "Output2";
   const splitters = machines.map((machine, i) => {
     const center = vec(xOf(i) + offset.x, lineY, lineZ);
-    const splitter = b.place(SPLITTER, transform(center));
-    const sideOutput = { building: splitter, name: "Output2", position: attachmentPoint(SPLITTER, center, "Output2") };
+    const splitter = b.place(SPLITTER, transform(center, yaw));
+    const sideOutput = { building: splitter, name: side, position: at(center, side) };
     const machineInput = { building: machine, name: line.connector.name, position: b.worldPoint(machine, line.connector.offset) };
     if (line.level === 0) {
       b.belt(beltType(tiers.feeders[i]), sideOutput, machineInput);
@@ -376,14 +396,14 @@ function beltInputLine(ctx: RowContext, line: Line): Port {
     return { splitter, center };
   });
   for (let i = 1; i < splitters.length; i++) {
-    const prev = splitters[i - 1];
-    const next = splitters[i];
+    // Items move from "upstream" to "downstream": west to east by default, east to west when fed from the east.
+    const [up, down] = ctx.fromEast ? [splitters[i], splitters[i - 1]] : [splitters[i - 1], splitters[i]];
     b.belt(beltType(tiers.chain[i - 1]),
-      { building: prev.splitter, name: "Output1", position: attachmentPoint(SPLITTER, prev.center, "Output1") },
-      { building: next.splitter, name: "Input1", position: attachmentPoint(SPLITTER, next.center, "Input1") });
+      { building: up.splitter, name: "Output1", position: at(up.center, "Output1") },
+      { building: down.splitter, name: "Input1", position: at(down.center, "Input1") });
   }
-  const first = splitters[0];
-  return { side: "input", kind: "belt", tier: tiers.end, point: { building: first.splitter, name: "Input1", position: attachmentPoint(SPLITTER, first.center, "Input1") } };
+  const first = ctx.fromEast ? splitters[splitters.length - 1] : splitters[0];
+  return { side: "input", kind: "belt", tier: tiers.end, point: { building: first.splitter, name: "Input1", position: at(first.center, "Input1") } };
 }
 
 /** Merger manifold on the ground collecting from the machines' output face. */
@@ -487,8 +507,9 @@ function pipeOutputLine(ctx: RowContext, line: Line): Port {
   return { side: "output", kind: "pipe", tier: tiers.end, point: { building: last.junction, name: "Connection1", position: junctionPoint(last.center, "Connection1") } };
 }
 
-function attachmentPoint(type: string, center: Vec3, name: string): Vec3 {
-  return add(center, connector(type, name).offset);
+/** Connector position of a splitter/merger/junction placed at `center`, optionally turned by `yaw` degrees. */
+export function attachmentPoint(type: string, center: Vec3, name: string, yaw = 0): Vec3 {
+  return add(center, rotate(yawQuat(yaw), connector(type, name).offset));
 }
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
