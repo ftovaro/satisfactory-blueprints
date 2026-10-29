@@ -189,8 +189,8 @@ function cmdLearn(root: string): void {
   fs.writeFileSync(CONNECTOR_FILE, JSON.stringify(catalog, null, 2));
   console.log(`Connector data for ${Object.keys(catalog).length} building type(s) -> ${CONNECTOR_FILE}`);
 
-  // Production, logistics and power buildings, plus the 1 m foundations used for factory floors.
-  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/") || /Build_Foundation(_Concrete)?_8x1(_01)?_C$/.test(typePath));
+  // Production, logistics and power buildings, plus architecture (foundations, walls, roofs) for factory shells.
+  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/") || typePath.includes("/Buildable/Building/"));
   saveTemplates(templates);
   const counts = templates.versions.map((v) => `save ${v.header.saveVersion}: ${Object.keys(v.types).length}`).join(", ");
   console.log(`Templates (${counts}) -> ${TEMPLATE_FILE}`);

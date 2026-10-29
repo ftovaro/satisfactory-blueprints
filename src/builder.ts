@@ -24,7 +24,8 @@ export type BeltEnd = (ConnectorRef | { building?: undefined; name?: undefined }
 const LEVEL = "Persistent_Level";
 
 export type Color = { r: number; g: number; b: number; a: number };
-export const SIGN = "Build_StandaloneWidgetSign_SmallWide_C";
+/** 2:1 sign whose layout shows a title, a line of text and a big number. */
+export const SIGN = "Build_StandaloneWidgetSign_Large_C";
 /** Icon id the game's own empty signs use. */
 const BLANK_ICON = 369;
 
@@ -108,15 +109,16 @@ export class BlueprintBuilder {
   }
 
   /**
-   * Places a wide sign (4:1, a title line and a label line, with an icon). The sign's face points
-   * along `facing` (degrees, 0 = +X): learned from real blueprints, a sign's front is its local +Y.
+   * Places a sign. `texts` sets the layout's text elements by name (the Large sign's 2x1 layout has
+   * "Name", "Other_0" and "Other_1"); "
+" breaks lines. The sign's face points along `facing`
+   * (degrees, 0 = +X): learned from real blueprints, a sign's front is its local +Y.
    */
-  sign(at: Vec3, facing: number, content: { title: string; label: string; icon?: number; text?: Color; background?: Color }): Placed {
-    const sign = this.place(SIGN, transform(at, facing - 90));
+  sign(at: Vec3, facing: number, content: { type?: string; texts: Record<string, string>; icon?: number; text?: Color; background?: Color }): Placed {
+    const sign = this.place(content.type ?? SIGN, transform(at, facing - 90));
     const props = sign.entity.properties as any;
     for (const element of props.mPrefabTextElementSaveData?.values ?? []) {
-      const name = element.properties.ElementName.value;
-      element.properties.Text.value = name === "Name" ? content.title : name === "Label" ? content.label : "";
+      element.properties.Text.value = content.texts[element.properties.ElementName.value] ?? "";
     }
     // Icon elements exist twice (local and "global" library ids); keep them in sync.
     const iconId = content.icon ?? BLANK_ICON;
@@ -129,6 +131,11 @@ export class BlueprintBuilder {
     if (content.text && props.mForegroundColor) props.mForegroundColor.value = { ...content.text };
     if (content.background && props.mBackgroundColor) props.mBackgroundColor.value = { ...content.background };
     return sign;
+  }
+
+  /** First of the given building types (class names) that this blueprint's template version has. */
+  pick(...types: string[]): string | undefined {
+    return types.find((t) => Object.keys(this.library.types).some((k) => k.endsWith(`.${t}`)));
   }
 
   /** Sets the production recipe of a machine. */

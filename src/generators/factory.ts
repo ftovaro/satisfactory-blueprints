@@ -8,6 +8,7 @@ import { Branch, buildRoute } from "../layout/route-builder.js";
 import { BuiltRow, LineKind, PreparedRow, beltType, buildRow, libraryFor, liftType, pipeType, prepareRow } from "./machine-row.js";
 import { rowOptionsFor } from "./row-options.js";
 import { iconFor } from "../data/icons.js";
+import { buildShell } from "../layout/shell.js";
 
 /**
  * A complete factory in one blueprint: every production step of the target item, stacked in floors,
@@ -50,8 +51,8 @@ const ROW_GAP = 2 * CELL;
 const HEADROOM = 150;
 const WALL = 400;
 /** Free cells around the rows for routing: behind (where rows connect), in front, and to the sides. */
-const MARGIN_BACK = 5 * CELL;
-const MARGIN_FRONT = 3 * CELL;
+const MARGIN_BACK = 3 * CELL;
+const MARGIN_FRONT = 2 * CELL;
 const MARGIN_SIDE = 2 * CELL;
 /** One Conveyor Lift is at most about 48 m tall. */
 const MAX_RISE_LEVELS = 12;
@@ -169,6 +170,8 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     z += Math.ceil((Math.max(...floor.map((r) => r.row.height)) + SLAB + HEADROOM) / WALL) * WALL;
   }
   const top = z;
+  // The roof rests on the walls right above the last floor (floors are whole walls tall).
+  const roofZ = Math.ceil(top / WALL) * WALL;
 
   // Flows: every item a row consumes, plus everything that leaves the factory.
   const flows: Flow[] = [];
@@ -263,18 +266,22 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     minY: Math.min(...all.map((e) => e.minY)) - MARGIN_SIDE,
     maxY: Math.max(...all.map((e) => e.maxY)) + MARGIN_SIDE,
   };
-  const origin = { x: bounds.minX + CELL / 2, y: bounds.minY + CELL / 2, z: floorZ[0] + 100 };
+  // Cell centers fall on multiples of CELL in x, so the first cell behind the rows (which end at
+  // x = 0) is centered 4 m behind them and touches them.
+  const origin = { x: bounds.minX, y: bounds.minY + CELL / 2, z: floorZ[0] + 100 };
+  // An even number of cells each way, so the walls around the grid tile in 8 m panels.
+  const even = (n: number) => n + (n % 2);
   const size = {
-    nx: Math.ceil((bounds.maxX - bounds.minX) / CELL),
-    ny: Math.ceil((bounds.maxY - bounds.minY) / CELL),
-    nz: Math.ceil((top - origin.z) / LEVEL) + 1,
+    nx: even(Math.ceil((bounds.maxX - bounds.minX) / CELL)),
+    ny: even(Math.ceil((bounds.maxY - bounds.minY) / CELL)),
+    // Routing levels stay at least 2 m under the roof.
+    nz: Math.floor((roofZ - 200 - origin.z) / LEVEL) + 1,
   };
   const makeGrid = () => {
     const grid = new Grid(origin, size);
     rows.forEach((r) => {
       const e = extentOf(r);
-      // One extra cell behind the row end is kept for the short pieces joining ports to the grid.
-      grid.blockBox({ minX: e.minX - CELL - 250, maxX: e.maxX + 150, minY: e.minY - 150, maxY: e.maxY + 150, minZ: floorZ[r.floor] - SLAB, maxZ: floorZ[r.floor] + r.row.height });
+      grid.blockBox({ minX: e.minX - 150, maxX: e.maxX + 150, minY: e.minY - 150, maxY: e.maxY + 150, minZ: floorZ[r.floor] - SLAB, maxZ: floorZ[r.floor] + r.row.height });
     });
     floors.forEach((_, f) => {
       if (f === 0) return;
@@ -286,7 +293,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
 
   // Where lines meet rows: the cell just behind the row end, at the port's height.
   const portCell = (p: Vec3, rowMinX: number) => {
-    const i = Math.floor((rowMinX - CELL - CELL / 2 - 150 - origin.x) / CELL);
+    const i = Math.floor((rowMinX - 250 - origin.x) / CELL);
     return { i, j: Math.round((p.y - origin.y) / CELL), k: Math.round((p.z - origin.z) / LEVEL) };
   };
   const rowMinX = (r: PlacedRow) => extentOf(r).minX;
@@ -462,8 +469,11 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   for (const port of ports) {
     const outward = port.side === "input" ? -1 : 1;
     b.sign(vec(port.at.x + outward * SIGN_OFFSET, port.at.y, port.at.z + SIGN_HEIGHT), port.side === "input" ? 180 : 0, {
-      title: port.flow.label.toUpperCase(),
-      label: `${port.side === "input" ? "IN" : "OUT"}  ${fmt(port.flow.perMinute)}${units(port.flow)}`,
+      texts: {
+        Name: port.flow.label.toUpperCase(),
+        Other_0: `${port.side === "input" ? "INPUT" : "OUTPUT"} · ${port.flow.kind} Mk${tierFor(port.flow.kind, port.flow.perMinute)}`,
+        Other_1: `${fmt(port.flow.perMinute)}${units(port.flow)}`,
+      },
       icon: iconFor(port.flow.label),
       text: port.side === "input" ? INPUT_COLOR : OUTPUT_COLOR,
       background: SIGN_BACKGROUND,
@@ -474,12 +484,27 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
     const levels = Math.max(r.row.inputLines.length, r.row.outputLines.length) - 1;
     const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
     b.sign(vec(e.minX - CELL / 2, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 180, {
-      title: `${r.row.options.count}x ${r.row.spec.key.toUpperCase()}`,
-      label: `${fmt(rate)}/min ${r.step.product.name}`,
+      texts: {
+        Name: r.step.product.name.toUpperCase(),
+        Other_0: `${r.row.options.count}x ${r.row.spec.key}${(r.row.options.clocks ?? []).some((c) => Math.abs(c - 1) > 1e-6) ? ` (last at ${fmt((r.row.options.clocks ?? []).slice(-1)[0] * 100)}%)` : ""}`,
+        Other_1: `${fmt(rate)}/min`,
+      },
       icon: iconFor(r.step.product.name),
       text: ROW_COLOR,
       background: SIGN_BACKGROUND,
     });
+  }
+
+  // The building: walls on the grid's outer edge (where the ports are), holes where lines cross
+  // them, a flat roof above everything and a wall pole outside the back wall as the power inlet.
+  const envelope = {
+    minX: origin.x - CELL / 2, maxX: origin.x + (size.nx - 0.5) * CELL,
+    minY: origin.y - CELL / 2, maxY: origin.y + (size.ny - 0.5) * CELL,
+  };
+  const shell = buildShell(b, { envelope, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })) });
+  if (shell.inlet) {
+    const first = rows[0].poleTops![0];
+    b.wire({ building: shell.inlet.pole, name: b.powerConnector(shell.inlet.pole), position: shell.inlet.position }, { building: first.pole, name: b.powerConnector(first.pole), position: first.position });
   }
 
   // One power grid: each row's last pole wired to the next row's first pole, pump poles to the last row pole.
@@ -500,7 +525,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
   const exported = flows.filter((f) => f.exported);
   const rawText = rawFlows.map((f) => `${fmt(f.perMinute)}${unit(f)} ${f.label} (${carrier(f)})`).join(", ");
   const outText = exported.map((f) => `${fmt(f.perMinute)}${unit(f)} ${f.label} (${carrier(f)})`).join(", ");
-  const half = Math.ceil(Math.max(-bounds.minX, bounds.maxX, -bounds.minY, bounds.maxY) / FOUNDATION) * FOUNDATION;
+  const half = Math.ceil(Math.max(-envelope.minX, envelope.maxX, -envelope.minY, envelope.maxY) / FOUNDATION) * FOUNDATION;
   const blueprint = b.build(options.name ?? `Factory ${fmt(options.rate)} ${productName}`, {
     description: `Complete factory: ${fmt(options.rate)}/min ${productName} in ${floors.length} floor(s). `
       + `Inputs at ground level on the back edge, one each: ${rawText}. Outputs at ground level on the front edge: ${outText}. Power: connect any pole.`,
@@ -510,7 +535,7 @@ export function generateFactory(data: GameData, options: FactoryOptions): { blue
 
   const pumps = blueprint.objects.filter((o) => /Build_PipelinePump_C$/.test(o.typePath) && "transform" in o).length;
   const report = [
-    `${productName}: ${fmt(options.rate)}/min in ${floors.length} floor(s), ${rows.reduce((n, r) => n + r.row.options.count, 0)} machines${pumps ? `, ${pumps} pump(s)` : ""}, footprint ${fmt((bounds.maxX - bounds.minX) / 100)} x ${fmt((bounds.maxY - bounds.minY) / 100)} m`,
+    `${productName}: ${fmt(options.rate)}/min in ${floors.length} floor(s), ${rows.reduce((n, r) => n + r.row.options.count, 0)} machines${pumps ? `, ${pumps} pump(s)` : ""}, building ${fmt((envelope.maxX - envelope.minX) / 100)} x ${fmt((envelope.maxY - envelope.minY) / 100)} x ${fmt(roofZ / 100)} m`,
     ...floors.map((floor, f) => `  floor ${f} (${fmt(floorZ[f] / 100)} m): ` + floor.map((r) => {
       const partial = (r.row.options.clocks ?? []).filter((c) => Math.abs(c - 1) > 1e-6).map((c) => `${fmt(c * 100)}%`);
       const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
