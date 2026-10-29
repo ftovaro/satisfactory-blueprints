@@ -1,5 +1,5 @@
 import { Blueprint, SaveComponent, SaveEntity } from "@etothepii/satisfactory-file-parser";
-import { Transform, Vec3, add, length, multiply, rotate, scale, snap, sub, toWorld, transform, vec, yaw } from "./geometry.js";
+import { Transform, Vec3, add, length, multiply, rotate, scale, snap, sub, toLocal, toWorld, transform, vec, yaw } from "./geometry.js";
 import { SELF, TemplateLibrary, cloneDeep } from "./templates.js";
 import { costOf } from "./data/costs.js";
 
@@ -44,13 +44,44 @@ export class BlueprintBuilder {
     this.library = library;
   }
 
+  /**
+   * Coordinates passed to every method are relative to the current frame (identity by default).
+   * Generators build a piece (e.g. one factory floor) in its own convenient coordinates and let the
+   * frame place and orient it in the blueprint.
+   */
+  private frame: Transform = transform(vec());
+
+  withFrame<T>(frame: Transform, build: () => T): T {
+    const previous = this.frame;
+    this.frame = frame;
+    try {
+      return build();
+    } finally {
+      this.frame = previous;
+    }
+  }
+
+  /** Converts a frame-relative point to blueprint coordinates. */
+  toBlueprint(point: Vec3): Vec3 {
+    return toWorld(this.frame, point);
+  }
+
+  private toBlueprintDirection(direction: Vec3): Vec3 {
+    return rotate(this.frame.rotation, direction);
+  }
+
   /** Places a building of the given type (full typePath or a unique suffix such as "Build_ConstructorMk1_C"). */
   place(type: string, at: Transform): Placed {
-    const placed = this.instantiate(type, at);
+    const placed = this.instantiate(type, {
+      rotation: multiply(this.frame.rotation, at.rotation),
+      translation: this.toBlueprint(at.translation),
+      scale3d: at.scale3d,
+    });
     this.addCost(costOf(placed.entity.typePath));
     return placed;
   }
 
+  /** Creates the objects of a building at a transform in blueprint coordinates. */
   private instantiate(type: string, at: Transform): Placed {
     const typePath = this.resolveType(type);
     const template = this.library.types[typePath];
@@ -94,12 +125,17 @@ export class BlueprintBuilder {
     }
   }
 
-  /** Places a straight conveyor belt from an output connector to an input connector. */
-  belt(type: string, from: BeltEnd, to: BeltEnd): Placed {
-    const delta = sub(to.position, from.position);
-    const belt = this.instantiate(type, transform(from.position));
+  /**
+   * Places a conveyor belt from an output connector to an input connector. Without `direction` it is
+   * straight; with it, the belt leaves and arrives moving in that direction, so a sideways or vertical
+   * offset becomes a smooth S-curve (belts store such curves as two points with tangents).
+   */
+  belt(type: string, from: BeltEnd, to: BeltEnd, direction?: Vec3): Placed {
+    const start = this.toBlueprint(from.position);
+    const delta = sub(this.toBlueprint(to.position), start);
+    const belt = this.instantiate(type, transform(start));
     // Straight belts saved by the game use tangents half as long as the belt.
-    const tangent = scale(delta, 0.5);
+    const tangent = direction ? scale(this.toBlueprintDirection(direction), length(delta)) : scale(delta, 0.5);
     (belt.entity.properties as any).mSplineData.values = [vec(), delta].map((location) => this.splinePoint(belt, location, tangent));
     if (from.building) this.link({ building: belt, name: "ConveyorAny0" }, from);
     if (to.building) this.link({ building: belt, name: "ConveyorAny1" }, to);
@@ -109,18 +145,25 @@ export class BlueprintBuilder {
     return belt;
   }
 
+  /** A lift that carries items straight down by `height` cm, continuing in direction `travelYaw`. */
+  liftDown(type: string, top: Vec3, height: number, travelYaw: number): { lift: Placed; input: Vec3; output: Vec3 } {
+    return this.lift(type, top, -height, travelYaw, travelYaw);
+  }
+
   /**
-   * Places a conveyor lift that carries items straight down by `height` cm. Items enter at `top`
-   * moving in direction `travelYaw` (degrees, 0 = +X) and leave at the bottom moving the same way.
+   * Places a conveyor lift. Items enter at `start` moving in direction `inYaw` (degrees, 0 = +X),
+   * travel `rise` cm up (negative = down) and leave moving in direction `outYaw`.
    *
    * Learned from real blueprints: the lift's transform sits at its input end, `mTopTransform` holds
-   * the other end relative to it, and both belt connectors lie on the lift's vertical axis. An
-   * unrotated far end makes items U-turn (enter and leave on the same side), so the bottom end is
-   * rotated 180° to make them pass straight through.
+   * the other end relative to it, and both belt connectors lie on the lift's vertical axis. The input
+   * accepts items moving along the lift's local -X axis; an unrotated far end sends them back out
+   * along +X (a U-turn), and rotating the far end by R turns the exit by R.
    */
-  liftDown(type: string, top: Vec3, height: number, travelYaw: number): { lift: Placed; input: Vec3; output: Vec3 } {
-    // The input connector accepts items moving along the lift's local -X axis.
-    const lift = this.place(type, transform(top, travelYaw + 180));
+  lift(type: string, start: Vec3, rise: number, inYaw: number, outYaw: number): { lift: Placed; input: Vec3; output: Vec3 } {
+    const lift = this.place(type, transform(start, inYaw + 180));
+    // q and -q are the same rotation; keep the form the game writes (z >= 0 for a half turn).
+    const raw = yaw(outYaw - inYaw - 180);
+    const turn = raw.w < -1e-9 || (Math.abs(raw.w) <= 1e-9 && raw.z < 0) ? { ...raw, z: -raw.z, w: -raw.w } : raw;
     const props = lift.entity.properties as any;
     delete props.mIsReversed;
     const struct = (name: string, structType: string, value: unknown) => ({
@@ -132,11 +175,30 @@ export class BlueprintBuilder {
     props.mTopTransform = struct("mTopTransform", "Transform", {
       type: "Transform",
       properties: {
-        Rotation: struct("Rotation", "Quat", { x: 0, y: 0, z: 1, w: 0 }),
-        Translation: struct("Translation", "Vector", { x: 0, y: 0, z: -height }),
+        Rotation: struct("Rotation", "Quat", { x: 0, y: 0, z: snap(turn.z, 1e-9), w: snap(turn.w, 1e-9) }),
+        Translation: struct("Translation", "Vector", { x: 0, y: 0, z: rise }),
       },
     });
-    return { lift, input: top, output: vec(top.x, top.y, top.z - height) };
+    return { lift, input: start, output: vec(start.x, start.y, start.z + rise) };
+  }
+
+  /**
+   * Places a quarter-circle belt: it starts at `from` moving along `fromDir` and ends `radius` cm
+   * further along both directions, moving along `toDir` (perpendicular). Returns its free end.
+   */
+  beltTurn(type: string, from: BeltEnd, fromDir: Vec3, toDir: Vec3, radius: number): BeltEnd & { building: Placed; name: string } {
+    const end = add(from.position, add(scale(fromDir, radius), scale(toDir, radius)));
+    const start = this.toBlueprint(from.position);
+    const belt = this.instantiate(type, transform(start));
+    // Hermite tangents of length 1.657 r approximate a circular quarter arc.
+    const k = 1.657 * radius;
+    (belt.entity.properties as any).mSplineData.values = [
+      this.splinePoint(belt, vec(), scale(this.toBlueprintDirection(fromDir), k)),
+      this.splinePoint(belt, sub(this.toBlueprint(end), start), scale(this.toBlueprintDirection(toDir), k)),
+    ];
+    if (from.building) this.link({ building: belt, name: "ConveyorAny0" }, from);
+    this.addCost(Object.fromEntries(Object.entries(costOf(belt.entity.typePath)).map(([item, n]) => [item, n * Math.max(1, Math.ceil((Math.PI * radius) / 400))])));
+    return { building: belt, name: "ConveyorAny1", position: end };
   }
 
   /**
@@ -145,10 +207,11 @@ export class BlueprintBuilder {
    * about every meter. Either end may be left open (a port for Auto-Connect).
    */
   pipe(type: string, from: BeltEnd, to: BeltEnd, direction: Vec3): Placed {
-    const pipe = this.instantiate(type, transform(from.position));
-    const delta = sub(to.position, from.position);
+    const start = this.toBlueprint(from.position);
+    const pipe = this.instantiate(type, transform(start));
+    const delta = sub(this.toBlueprint(to.position), start);
     const horizontal = Math.hypot(delta.x, delta.y);
-    const t0 = scale(direction, Math.max(horizontal, 100));
+    const t0 = scale(this.toBlueprintDirection(direction), Math.max(horizontal, 100));
     const segments = Math.max(1, Math.ceil(length(delta) / 100));
     // Cubic Hermite from the origin to `delta`, with tangent t0 at both ends (the start point is 0).
     const combine = (a: number, b: number) => add(scale(t0, a), scale(delta, b));
@@ -183,8 +246,8 @@ export class BlueprintBuilder {
     const props = line.entity.properties as any;
     const wire = props.mWireInstances?.values?.[0]?.properties;
     if (wire?.Locations) {
-      wire.Locations[0].value = { ...a.position };
-      wire.Locations[1].value = { ...b.position };
+      wire.Locations[0].value = this.toBlueprint(a.position);
+      wire.Locations[1].value = this.toBlueprint(b.position);
     }
     if (props.mCachedLength) props.mCachedLength.value = length(sub(b.position, a.position));
 
@@ -202,9 +265,9 @@ export class BlueprintBuilder {
     return found[0];
   }
 
-  /** World position of a building-local point. */
+  /** Position of a building-local point, in the current frame's coordinates. */
   worldPoint(building: Placed, local: Vec3): Vec3 {
-    return toWorld(building.entity.transform as any, local);
+    return toLocal(this.frame, toWorld(building.entity.transform as any, local));
   }
 
   /**

@@ -7,6 +7,8 @@ export interface MachineSpec {
   key: string;
   type: string;
   pitch: number;
+  /** Building height (cm), from the wiki; decides how tall a factory floor must be. */
+  height: number;
   recipes: Record<string, string>;
 }
 
@@ -17,6 +19,7 @@ export const MACHINES: Record<string, MachineSpec> = {
     key: "constructor",
     type: "Build_ConstructorMk1_C",
     pitch: 1000,
+    height: 850,
     recipes: Object.fromEntries(
       ["IronPlate", "IronRod", "Screw", "Wire", "Cable", "Concrete", "CopperSheet", "Quickwire", "SteelBeam", "SteelPipe", "Silica", "AluminumCasing"]
         .map((name) => [name, recipe("Constructor", name)]),
@@ -26,16 +29,17 @@ export const MACHINES: Record<string, MachineSpec> = {
     key: "smelter",
     type: "Build_SmelterMk1_C",
     pitch: 800,
+    height: 850,
     recipes: Object.fromEntries(["IngotIron", "IngotCopper", "IngotCaterium"].map((name) => [name, recipe("Smelter", name)])),
   },
   // Multi-input machines: pick recipes through the game data (generate row --rate --recipe "<name>").
-  assembler: { key: "assembler", type: "Build_AssemblerMk1_C", pitch: 1200, recipes: {} },
-  foundry: { key: "foundry", type: "Build_FoundryMk1_C", pitch: 1200, recipes: {} },
-  manufacturer: { key: "manufacturer", type: "Build_ManufacturerMk1_C", pitch: 2000, recipes: {} },
+  assembler: { key: "assembler", type: "Build_AssemblerMk1_C", pitch: 1200, height: 1100, recipes: {} },
+  foundry: { key: "foundry", type: "Build_FoundryMk1_C", pitch: 1200, height: 900, recipes: {} },
+  manufacturer: { key: "manufacturer", type: "Build_ManufacturerMk1_C", pitch: 2000, height: 1200, recipes: {} },
   // Fluid machines (pipe connectors); see src/fluids.
-  refinery: { key: "refinery", type: "Build_OilRefinery_C", pitch: 1200, recipes: {} },
-  blender: { key: "blender", type: "Build_Blender_C", pitch: 2000, recipes: {} },
-  packager: { key: "packager", type: "Build_Packager_C", pitch: 1000, recipes: {} },
+  refinery: { key: "refinery", type: "Build_OilRefinery_C", pitch: 1200, height: 3000, recipes: {} },
+  blender: { key: "blender", type: "Build_Blender_C", pitch: 2000, height: 1600, recipes: {} },
+  packager: { key: "packager", type: "Build_Packager_C", pitch: 1000, height: 800, recipes: {} },
 };
 
 export function findMachine(key: string): MachineSpec {

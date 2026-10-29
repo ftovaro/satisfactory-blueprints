@@ -81,6 +81,30 @@ npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --o
 
 Layout: machines face the same direction, a line of splitters feeds each input and a line of mergers collects the output. Connect your supply belts to the left end of the splitter lines and take the products from the right end of the merger line. Machines with several inputs (Assembler, Foundry, Manufacturer) get one manifold per input, stacked 4 m apart; the upper ones drop into the machines through Conveyor Lifts. With `--rate`, every belt segment gets the slowest tier that carries its flow: the input lines get slower toward their far end and the output line faster toward its exit. The command prints which belt tier each supply line needs. Power poles sit between the machines; connect any of them to your grid. After placing the blueprint in-game, you can open it in the Blueprint Designer and re-save it so the game recalculates its cost.
 
+### Complete factories
+
+```bash
+npm run sbp -- generate factory "Reinforced Iron Plate" 5 --session "My Session"
+npm run sbp -- generate factory "Steel Beam" 15 --recipe "Steel Ingot=Solid Steel Ingot" --out-dir ./out
+```
+
+The whole production chain goes into one blueprint, built upward:
+
+- **Floors:** each step is a machine row (same manifolds as `generate row`). Steps fed only by raw materials are on the ground floor, and every other step sits one floor above its highest ingredient step. Floors are 1 m concrete foundation slabs.
+- **Connections between steps:** they run outside the slabs at two corners. Each one is a belt with 90° turns and a Conveyor Lift (several chained lifts for climbs over 48 m).
+- **Inputs and output:** raw materials enter at ground level through open belt ends, and the final product comes down to ground level and leaves through another. Use Auto-Connect (R) to hook them up.
+- **Power:** all rows share one grid; connect any pole.
+- **Shared intermediates:** an intermediate needed by two steps gets its own machine group for each, so currently a raw material can need more than one input belt.
+- **Size:** large factories exceed the Blueprint Designer. The game still places them, but they cannot be edited in a designer.
+
+Every generated blueprint is checked automatically (`sbp check` runs the same checks on any blueprint):
+- links stored on both sides;
+- belt ends exactly on their connectors;
+- belts entering lifts the right way;
+- no belts or lifts clipping each other;
+- pole connection limits;
+- every machine powered.
+
 ### Fluids
 
 Recipes with fluids (for example `Plastic`, `Rubber`, `Fuel`) get pipe manifolds made of Junction Crosses, with a loopback pipe when there are 3 or more machines. To inspect the pipe networks of any blueprint, generated or hand-made:
@@ -135,7 +159,8 @@ Buildings:
 3. Generate simple modules (a row of machines with input/output manifolds and power): first version done, in-game testing pending
 4. ~~Recipe and ratio planner from the game's own data~~
 5. ~~Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts~~ (in-game testing pending)
-6. Full production lines (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
+6. ~~Full production lines stacked in floors~~ (in-game testing pending; next: one input belt per raw material, fluid steps)
+7. Building shells, colors and signs (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
 
 ## Safety notes
 

@@ -11,11 +11,14 @@ import { TEMPLATE_FILE, extractTemplates, saveTemplates } from "./templates.js";
 import { generateMachineRow } from "./generators/machine-row.js";
 import { GENERATED_MARKER } from "./builder.js";
 import { checkNetworks, findNetworks, formatNetworks } from "./fluids/network.js";
+import { checkBlueprint, formatCheck } from "./analysis/check.js";
 import { GAME_DATA_FILE, GameData, findItem, findRecipe as findGameRecipe, loadGameData, pickTier, recipesFor } from "./gamedata/index.js";
 import { findDocsFile, importGameData } from "./gamedata/import.js";
 import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
 import { MachineRowOptions, PortSpec, planLine } from "./generators/machine-row.js";
-import { MACHINES } from "./data/machines.js";
+import { generateFactory } from "./generators/factory.js";
+import { rowOptionsFor } from "./generators/row-options.js";
+import { Blueprint as BlueprintType } from "@etothepii/satisfactory-file-parser";
 import { formatPlan } from "./planner/format.js";
 
 const USAGE = `Usage: sbp <command> [options]
@@ -27,6 +30,7 @@ Commands:
   roundtrip <file|session/name>
                               Parse and re-serialize a blueprint, then compare it to the original
   scan [session]              Parse every blueprint and report which ones fail
+  check <file|session/name>   Check links, belt and lift geometry, clashes, power and pipe networks
   connectors                  Print the belt/pipe connector positions learned from all blueprints
   learn                       Rebuild data/templates.json and data/connectors.json from your blueprints
   import-game-data [--game-dir <path>]
@@ -34,6 +38,10 @@ Commands:
   recipes <item>              List the recipes that produce an item
   plan <item> <rate per min> [--recipe "<item>=<recipe>"]... [--input <item>]...
                               Plan a production chain: machines, clock speeds, belts and power
+  generate factory <item> <rate per min> [--recipe "<item>=<recipe>"]... [--input <item>]...
+               (--session <name> | --out-dir <path>) [--name <name>] [--force]
+                              Generate a complete factory: every step stacked in floors, raw inputs
+                              and the product at ground level
   generate row --machine <constructor|smelter> (--count <n> | --rate <per min>) [--recipe <name>]
                [--belt <1-6>] [--pole <1-2>] (--session <name> | --out-dir <path>) [--name <name>] [--force]
                               Generate a row of machines with input/output manifolds and power.
@@ -181,8 +189,8 @@ function cmdLearn(root: string): void {
   fs.writeFileSync(CONNECTOR_FILE, JSON.stringify(catalog, null, 2));
   console.log(`Connector data for ${Object.keys(catalog).length} building type(s) -> ${CONNECTOR_FILE}`);
 
-  // Production, logistics and power buildings only; architecture is not needed by the generators.
-  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/"));
+  // Production, logistics and power buildings, plus the 1 m foundations used for factory floors.
+  const templates = extractTemplates(blueprints, (typePath) => typePath.includes("/Buildable/Factory/") || /Build_Foundation(_Concrete)?_8x1(_01)?_C$/.test(typePath));
   saveTemplates(templates);
   const counts = templates.versions.map((v) => `save ${v.header.saveVersion}: ${Object.keys(v.types).length}`).join(", ");
   console.log(`Templates (${counts}) -> ${TEMPLATE_FILE}`);
@@ -190,8 +198,6 @@ function cmdLearn(root: string): void {
 
 function cmdGenerate(root: string, args: Args): void {
   const kind = args.positional[0];
-  if (kind !== "row") throw new Error(`Unknown generator "${kind ?? ""}". Available: row`);
-
   const flag = (name: string) => (typeof args.flags[name] === "string" ? (args.flags[name] as string) : undefined);
   const number = (name: string) => (flag(name) !== undefined ? Number(flag(name)) : undefined);
   const session = flag("session");
@@ -199,8 +205,20 @@ function cmdGenerate(root: string, args: Args): void {
   if (!outDir) throw new Error("Pass --session <name> to install into a game session, or --out-dir <path>.");
   if (session && !fs.existsSync(outDir)) throw new Error(`Session folder not found: ${outDir}. Existing sessions: ${listSessions(root).join(", ")}`);
 
-  const options = number("rate") !== undefined ? rowFromRate(flag("recipe"), number("rate")!, number("belt")) : rowFromCount(flag("machine"), number("count"), flag("recipe"), number("belt"));
-  const blueprint = generateMachineRow({ ...options, pole: number("pole"), name: flag("name") });
+  let blueprint: BlueprintType;
+  if (kind === "row") {
+    const options = number("rate") !== undefined ? rowFromRate(flag("recipe"), number("rate")!, number("belt")) : rowFromCount(flag("machine"), number("count"), flag("recipe"), number("belt"));
+    blueprint = generateMachineRow({ ...options, pole: number("pole"), name: flag("name") });
+  } else if (kind === "factory") {
+    const rate = Number(args.positional[args.positional.length - 1]);
+    const target = args.positional.slice(1, -1).join(" ");
+    if (!target || !(rate > 0)) throw new Error('Usage: sbp generate factory <item> <rate per minute> (--session <name> | --out-dir <path>)');
+    const result = generateFactory(loadGameData(), { target, rate, recipes: recipeFlags(args), inputs: args.repeated.input, name: flag("name"), pole: number("pole") });
+    console.log(`${result.report}\n`);
+    blueprint = result.blueprint;
+  } else {
+    throw new Error(`Unknown generator "${kind ?? ""}". Available: row, factory`);
+  }
 
   const fileName = blueprint.name.replace(/[<>:"/\\|?*]/g, "_");
   if (fs.existsSync(path.join(outDir, `${fileName}.sbp`)) && args.flags.force !== true) {
@@ -210,6 +228,11 @@ function cmdGenerate(root: string, args: Args): void {
   // Read it back to make sure the file we produced is valid.
   const reread = readBlueprint(written.sbp);
   console.log(formatSummary(summarize(reread)));
+  const structure = checkBlueprint(reread);
+  console.log(`
+${formatCheck(structure)}`);
+  // A generated blueprint should be spotless: any finding is a generator bug.
+  if (structure.errors.length + structure.warnings.length > 0) process.exitCode = 1;
   // Every generated blueprint with pipes gets the fluid check; problems are printed in full.
   const networks = findNetworks(reread, tryLoadGameData());
   if (networks.length > 0) {
@@ -237,28 +260,9 @@ function rowFromRate(recipeQuery: string | undefined, rate: number, belt: number
   if (!recipeQuery) throw new Error('"generate row --rate" needs --recipe (any recipe name, e.g. "Iron Plate" or "Cast Screws").');
   const data = loadGameData();
   const recipe = findGameRecipe(data, recipeQuery);
-  const spec = Object.values(MACHINES).find((m) => m.type === recipe.machine);
-  if (!spec) throw new Error(`"${recipe.name}" runs in a ${data.machines[recipe.machine].name}; rows support: ${Object.keys(MACHINES).join(", ")}.`);
-
-  // The rate applies to the first product; other products (byproducts) follow from the recipe.
-  const product = recipe.outputs[0].item;
-  const clocks = machineClocks(rate, perMinute(recipe, product, "outputs"));
-  const port = (side: "inputs" | "outputs") => (f: { item: string }): PortSpec => ({
-    label: data.items[f.item].name,
-    kind: data.items[f.item].form === "solid" ? "belt" : "pipe",
-    perMachine: clocks.map((c) => perMinute(recipe, f.item, side) * c),
-  });
-  const options: RowOptions = {
-    machine: spec.key,
-    count: clocks.length,
-    clocks,
-    recipe: recipe.path,
-    label: `${fmt(rate)} ${data.items[product].name}`,
-    inputs: recipe.inputs.map(port("inputs")),
-    outputs: recipe.outputs.map(port("outputs")),
-    belt,
-    speeds: { belt: data.belts.map((t) => t.perMinute), pipe: data.pipes.map((t) => t.perMinute) },
-  };
+  const options: RowOptions = rowOptionsFor(data, recipe, rate, belt);
+  const clocks = options.clocks!;
+  const spec = { key: options.machine };
 
   const tiers = (list: number[]) => list.map((t) => `Mk${t}`).join(" ") || "-";
   console.log(`${spec.key}: ${clocks.length} machine(s), clocks ${clocks.map((c) => `${fmt(c * 100)}%`).join(", ")}`);
@@ -279,6 +283,20 @@ function tryLoadGameData(): GameData | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** "check <blueprint>": structural checks plus the fluid check. */
+function cmdCheck(root: string, args: Args): void {
+  const target = args.positional.join(" ");
+  if (!target) throw new Error("Usage: sbp check <file|session/name>");
+  const blueprint = readBlueprint(resolveBlueprintPath(target, root));
+  const structure = checkBlueprint(blueprint);
+  console.log(formatCheck(structure));
+  const data = tryLoadGameData();
+  const networks = findNetworks(blueprint, data);
+  if (networks.length > 0) console.log(`
+${formatNetworks(networks, checkNetworks(networks, data), data)}`);
+  if (structure.errors.length > 0) process.exitCode = 1;
 }
 
 /** "fluids check <blueprint>": every pipe network with its endpoints, flows, elevations and rule violations. */
@@ -315,17 +333,21 @@ function cmdRecipes(args: Args): void {
   }
 }
 
+/** --recipe "<item>=<recipe>" flags as an item -> recipe map. */
+function recipeFlags(args: Args): Record<string, string> {
+  return Object.fromEntries((args.repeated.recipe ?? []).map((pair) => {
+    const [itemQuery, recipeQuery] = pair.split("=");
+    if (!recipeQuery) throw new Error(`--recipe expects "<item>=<recipe>", got "${pair}".`);
+    return [itemQuery.trim(), recipeQuery.trim()];
+  }));
+}
+
 function cmdPlan(args: Args): void {
   const rate = Number(args.positional[args.positional.length - 1]);
   const item = args.positional.slice(0, -1).join(" ");
   if (!item || !(rate > 0)) throw new Error('Usage: sbp plan <item> <rate per minute>, e.g. sbp plan "Motor" 10');
   const data = loadGameData();
-  const recipes = Object.fromEntries((args.repeated.recipe ?? []).map((pair) => {
-    const [itemQuery, recipeQuery] = pair.split("=");
-    if (!recipeQuery) throw new Error(`--recipe expects "<item>=<recipe>", got "${pair}".`);
-    return [itemQuery.trim(), recipeQuery.trim()];
-  }));
-  console.log(formatPlan(plan(data, item, rate, { recipes, inputs: args.repeated.input }), data));
+  console.log(formatPlan(plan(data, item, rate, { recipes: recipeFlags(args), inputs: args.repeated.input }), data));
 }
 
 function cmdConnectors(root: string): void {
@@ -371,6 +393,8 @@ function main(): void {
       return cmdRecipes(args);
     case "plan":
       return cmdPlan(args);
+    case "check":
+      return cmdCheck(root, args);
     case "fluids":
       return cmdFluids(root, args);
     default:

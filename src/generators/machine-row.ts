@@ -2,7 +2,7 @@ import { Blueprint } from "@etothepii/satisfactory-file-parser";
 import { BlueprintBuilder, ConnectorRef, Placed } from "../builder.js";
 import { connector, connectorsOf } from "../connectors.js";
 import { Vec3, add, transform, vec } from "../geometry.js";
-import { findMachine, findRecipe } from "../data/machines.js";
+import { MachineSpec, findMachine, findRecipe } from "../data/machines.js";
 import { selectLibrary } from "../templates.js";
 import type { ConnectorStats } from "../analysis/connectors.js";
 
@@ -90,9 +90,9 @@ const FLOW_TO_FRONT_YAW = -90;
 const SPLITTER = "Build_ConveyorAttachmentSplitter_C";
 const MERGER = "Build_ConveyorAttachmentMerger_C";
 const JUNCTION = "Build_PipelineJunction_Cross_C";
-const beltType = (tier: number) => `Build_ConveyorBeltMk${tier}_C`;
-const liftType = (tier: number) => `Build_ConveyorLiftMk${tier}_C`;
-const pipeType = (tier: number) => (tier === 1 ? "Build_Pipeline_C" : "Build_PipelineMK2_C");
+export const beltType = (tier: number) => `Build_ConveyorBeltMk${tier}_C`;
+export const liftType = (tier: number) => `Build_ConveyorLiftMk${tier}_C`;
+export const pipeType = (tier: number) => (tier === 1 ? "Build_Pipeline_C" : "Build_PipelineMK2_C");
 
 /**
  * Tiers of one manifold line.
@@ -140,7 +140,23 @@ interface Line {
   tiers: LineTiers;
 }
 
-export function generateMachineRow(options: MachineRowOptions): Blueprint {
+/** Everything decided about a row before anything is placed. */
+export interface PreparedRow {
+  spec: MachineSpec;
+  options: MachineRowOptions;
+  inputLines: Line[];
+  outputLines: Line[];
+  /** 180 when the machine's inputs are on its +Y face and it must be turned. */
+  machineYaw: number;
+  /** Building types the row places (for picking a template library). */
+  required: Set<string>;
+  /** Highest point of the row's machines and manifolds above its floor (cm). */
+  height: number;
+  /** Footprint in the row's own coordinates (cm), machines and manifolds included. */
+  extent: { minX: number; maxX: number; minY: number; maxY: number };
+}
+
+export function prepareRow(options: MachineRowOptions): PreparedRow {
   const spec = findMachine(options.machine);
   if (!Number.isInteger(options.count) || options.count < 1) throw new Error("count must be a positive integer.");
   const all = connectorsOf(spec.type);
@@ -169,7 +185,6 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
 
   // The layout expects inputs on the machine's -Y face; turn machines that have them on +Y.
   const turned = inputs[0].connector.normal.y > 0;
-  const machineYaw = turned ? 180 : 0;
   const local = (c: ConnectorStats): Vec3 => (turned ? vec(-c.offset.x, -c.offset.y, c.offset.z) : c.offset);
 
   // Fluids get the lowest input levels and the highest output levels.
@@ -195,14 +210,43 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
   if (lines.some((l) => l.port.kind === "pipe")) required.add(JUNCTION);
   if (inputLines.some((l) => l.port.kind === "belt")) required.add(SPLITTER);
   if (outputLines.some((l) => l.port.kind === "belt")) required.add(MERGER);
-  const b = new BlueprintBuilder(selectLibrary([...required]));
 
+  const rowLength = (options.count - 1) * spec.pitch;
+  const levels = Math.max(inputLines.length, outputLines.length) - 1;
+  const inFace = inputLines[0].offset.y;
+  const outFace = outputLines[0].offset.y;
+  const inLineY = inFace - (inputLines.length > 1 ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
+  const outLineY = outFace + (outputLines.length > 1 ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
+  const loopback = inputLines.some((l) => l.port.kind === "pipe") && options.count >= LOOPBACK_MIN_MACHINES ? LOOPBACK_OFFSET : 0;
+  return {
+    spec, options, inputLines, outputLines, required,
+    machineYaw: turned ? 180 : 0,
+    height: Math.max(spec.height, BELT_HEIGHT + levels * LEVEL_HEIGHT + 200),
+    extent: {
+      minX: -rowLength / 2 - spec.pitch / 2 - loopback,
+      maxX: rowLength / 2 + spec.pitch / 2 + loopback,
+      minY: inLineY - ATTACHMENT_RADIUS - loopback,
+      maxY: outLineY + ATTACHMENT_RADIUS,
+    },
+  };
+}
+
+/** What a built row exposes: where its lines meet the outside, and its power poles. */
+export interface BuiltRow {
+  /** Input ports are where supply must arrive (moving +X); output ports where products leave (moving +X). */
+  ports: (Port & { label: string; level: number; spec: PortSpec })[];
+  poles: { pole: Placed; position: Vec3 }[];
+}
+
+/** Places a prepared row in the builder's current frame: machines along X at y = 0 on z = 0. */
+export function buildRow(b: BlueprintBuilder, row: PreparedRow): BuiltRow {
+  const { spec, options, inputLines, outputLines } = row;
   const rowLength = (options.count - 1) * spec.pitch;
   const xOf = (i: number) => i * spec.pitch - rowLength / 2;
 
   const machines: Placed[] = [];
   for (let i = 0; i < options.count; i++) {
-    const machine = b.place(spec.type, transform(vec(xOf(i), 0, 0), machineYaw));
+    const machine = b.place(spec.type, transform(vec(xOf(i), 0, 0), row.machineYaw));
     if (options.recipe) b.setRecipe(machine, findRecipe(spec, options.recipe));
     const clock = options.clocks?.[i] ?? 1;
     if (Math.abs(clock - 1) > 1e-6) b.setClock(machine, clock);
@@ -216,14 +260,16 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
     inStacked: inputLines.length > 1,
     outStacked: outputLines.length > 1,
   };
-  const ports: Port[] = [
-    ...inputLines.map((l) => (l.port.kind === "belt" ? beltInputLine(ctx, l) : pipeInputLine(ctx, l))),
-    ...outputLines.map((l) => (l.port.kind === "belt" ? beltOutputLine(ctx, l) : pipeOutputLine(ctx, l))),
+  const tag = (line: Line, port: Port) => ({ ...port, label: line.port.label, level: line.level, spec: line.port });
+  const ports = [
+    ...inputLines.map((l) => tag(l, l.port.kind === "belt" ? beltInputLine(ctx, l) : pipeInputLine(ctx, l))),
+    ...outputLines.map((l) => tag(l, l.port.kind === "belt" ? beltOutputLine(ctx, l) : pipeOutputLine(ctx, l))),
   ];
 
   // Power: one pole in the gap between each pair of machines, powering both of them, chained to the
   // next pole (4 connections at most, which a Mk1 pole supports). An odd last machine gets its pole on the right.
-  let previousTop: { pole: Placed; position: Vec3 } | undefined;
+  const poleType = `Build_PowerPoleMk${options.pole ?? 1}_C`;
+  const poles: BuiltRow["poles"] = [];
   for (let i = 0; i < machines.length; i += 2) {
     const pair = machines.slice(i, i + 2);
     const position = vec(xOf(i) + spec.pitch / 2, 0, 0);
@@ -232,25 +278,29 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
     for (const machine of pair) {
       b.wire({ building: pole, name: b.powerConnector(pole), position: top }, { building: machine, name: b.powerConnector(machine), position: b.worldPoint(machine, vec(0, 0, 200)) });
     }
-    if (previousTop) b.wire({ building: previousTop.pole, name: b.powerConnector(previousTop.pole), position: previousTop.position }, { building: pole, name: b.powerConnector(pole), position: top });
-    previousTop = { pole, position: top };
+    const previous = poles[poles.length - 1];
+    if (previous) b.wire({ building: previous.pole, name: b.powerConnector(previous.pole), position: previous.position }, { building: pole, name: b.powerConnector(pole), position: top });
+    poles.push({ pole, position: top });
   }
+  return { ports, poles };
+}
+
+/** Building types needed by a set of prepared rows plus extra ones, as one template library. */
+export function libraryFor(rows: PreparedRow[], extra: string[] = []) {
+  return selectLibrary([...new Set([...rows.flatMap((r) => [...r.required]), ...extra])]);
+}
+
+export function generateMachineRow(options: MachineRowOptions): Blueprint {
+  const row = prepareRow(options);
+  const b = new BlueprintBuilder(libraryFor([row]));
+  const { ports } = buildRow(b, row);
+  const { spec, inputLines, outputLines } = row;
 
   // Ports: open belt/pipe ends on the designer boundary so Auto-Connect (R while placing) can link
   // them to other blueprints, as hand-made blueprints do. Inputs come in at -X, outputs leave at +X.
   const designerSize = b.requiredDesignerSize();
   const half = (designerSize * FOUNDATION) / 2;
-  for (const port of ports) {
-    const edge = vec(port.side === "input" ? -half : half, port.point.position.y, port.point.position.z);
-    if (port.kind === "belt") {
-      if (port.side === "input") b.belt(beltType(port.tier), { position: edge }, port.point);
-      else b.belt(beltType(port.tier), port.point, { position: edge });
-    } else if (port.side === "input") {
-      b.pipe(pipeType(port.tier), { position: edge }, port.point, vec(1, 0, 0));
-    } else {
-      b.pipe(pipeType(port.tier), port.point, { position: edge }, vec(1, 0, 0));
-    }
-  }
+  for (const port of ports) openPort(b, port, port.side === "input" ? -half : half);
 
   const recipeLabel = options.label ? ` ${options.label}` : options.recipe && !options.recipe.startsWith("/") ? ` ${options.recipe}` : "";
   const name = options.name ?? `${options.count}x ${capitalize(spec.key)}${recipeLabel}`;
@@ -267,6 +317,19 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
   });
 }
 
+/** Extends a row port straight along X to `edgeX`, ending in an open belt/pipe end. */
+export function openPort(b: BlueprintBuilder, port: Port, edgeX: number): void {
+  const edge = vec(edgeX, port.point.position.y, port.point.position.z);
+  if (port.kind === "belt") {
+    if (port.side === "input") b.belt(beltType(port.tier), { position: edge }, port.point);
+    else b.belt(beltType(port.tier), port.point, { position: edge });
+  } else if (port.side === "input") {
+    b.pipe(pipeType(port.tier), { position: edge }, port.point, vec(1, 0, 0));
+  } else {
+    b.pipe(pipeType(port.tier), port.point, { position: edge }, vec(1, 0, 0));
+  }
+}
+
 interface RowContext {
   b: BlueprintBuilder;
   machines: Placed[];
@@ -279,7 +342,7 @@ interface RowContext {
 }
 
 /** Where a line meets the outside world: the free end of its first (input) or last (output) attachment. */
-interface Port {
+export interface Port {
   side: "input" | "output";
   kind: LineKind;
   tier: number;
