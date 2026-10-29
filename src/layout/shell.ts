@@ -36,6 +36,8 @@ export interface ShellOptions {
   openings: Opening[];
   /** Whether a door at ground level, at `at` on the wall and opening along `inward`, would be clear. */
   doorway?: (at: Vec3, inward: Vec3) => boolean;
+  /** Any number: picks the materials, window pattern and skylights, so buildings differ. */
+  style?: number;
 }
 
 export interface Shell {
@@ -46,8 +48,18 @@ export interface Shell {
 
 export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
   const { envelope: e, floorZ, roofZ, openings } = options;
+  const style = options.style ?? 0;
+  const bit = (n: number) => Math.floor(style / 2 ** n) % 2 === 1;
+  const rotate = <T>(list: T[], n: number) => list.map((_, i) => list[(i + n) % list.length]);
   const solid = b.pick("Build_Wall_8x4_01_C", "Build_Wall_Concrete_8x4_C");
-  const window = b.pick("Build_Wall_Window_8x4_01_C", "Build_Wall_Window_8x4_03_C", "Build_Wall_Window_Thin_8x4_01_C", "Build_Wall_Concrete_8x4_Window_02_C") ?? solid;
+  // A concrete plinth (ground course) or the same metal all the way up.
+  const plinth = bit(0) ? b.pick("Build_Wall_Concrete_8x4_C") ?? solid : solid;
+  const window = b.pick(...rotate(["Build_Wall_Window_8x4_01_C", "Build_Wall_Window_8x4_03_C", "Build_Wall_Window_8x4_02_C", "Build_Wall_Window_Thin_8x4_01_C", "Build_Wall_Window_Thin_8x4_02_C"], style % 5), "Build_Wall_Concrete_8x4_Window_02_C") ?? solid;
+  // A low wall around the roof's edge.
+  const parapet = b.pick(...rotate(["Build_Wall_Orange_8x1_C", "Build_Wall_Concrete_8x1_C", "Build_SteelWall_8x1_C"], (style >> 3) % 3));
+  const skylight = b.pick("Build_FoundationGlass_01_C");
+  // Windows: on every other panel of the middle courses, in a band along one course, or on every panel but the corners.
+  const windowPattern = (style >> 5) % 3;
   const door = b.pick("Build_Wall_Door_8x4_01_C", "Build_Wall_Door_8x4_01_Steel_C", "Build_Wall_Concrete_SDoor_8x4_C") ?? solid;
   // A belt crossing the middle of a panel uses a wall with a conveyor opening (the belt runs 1 m
   // above the panel's base, in its middle); elsewhere a Conveyor Wall Hole on a plain wall.
@@ -103,7 +115,11 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
     // Openings without a matching hole piece leave the panel out.
     if (!centered && here.some((o) => !(o.kind === "belt" ? beltHole : pipeHole))) continue;
     // Windows on the middle courses of every other panel.
-    const type = centered ? beltPanel : p === doorPanel ? door : c > 0 && c < courses - 1 && p.s % 2 === 1 ? window : solid;
+    const middle = c > 0 && c < courses - 1;
+    const glazed = windowPattern === 0 ? middle && p.s % 2 === 1
+      : windowPattern === 1 ? c === Math.min(1, courses - 1) && courses > 1
+      : middle && p.s > 0 && p.s < p.segments - 1;
+    const type = centered ? beltPanel : p === doorPanel ? door : glazed ? window : c === 0 ? plinth : solid;
     b.place(type!, transform(p.at, side.yaw));
     pieces++;
     if (centered) continue;
@@ -113,11 +129,24 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
     }
   }
 
-  // Flat roof of 1 m foundations resting on the walls.
+  // Flat roof of 1 m foundations resting on the walls, with glass skylights away from the edges
+  // (a checkerboard or a strip down the middle) and a parapet around it.
   if (roof) {
-    for (let x = e.minX; x < e.maxX; x += FOUNDATION) {
-      for (let y = e.minY; y < e.maxY; y += FOUNDATION) {
-        b.place(roof, transform(vec(x + FOUNDATION / 2, y + FOUNDATION / 2, roofZ + 50)));
+    const nx = Math.round((e.maxX - e.minX) / FOUNDATION), ny = Math.round((e.maxY - e.minY) / FOUNDATION);
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        const inner = i > 0 && j > 0 && i < nx - 1 && j < ny - 1;
+        const glass = skylight && inner && (bit(7) ? (i + j) % 2 === 0 : j === Math.floor(ny / 2) && i % 2 === 1);
+        b.place(glass ? skylight! : roof, transform(vec(e.minX + (i + 0.5) * FOUNDATION, e.minY + (j + 0.5) * FOUNDATION, roofZ + 50)));
+        pieces++;
+      }
+    }
+  }
+  if (parapet) {
+    for (const side of sides) {
+      for (let along = side.from + WALL_WIDTH / 2; along < side.to; along += WALL_WIDTH) {
+        const at = side.x !== undefined ? vec(side.x, along, roofZ + 100) : vec(along, side.y!, roofZ + 100);
+        b.place(parapet, transform(at, side.yaw));
         pieces++;
       }
     }

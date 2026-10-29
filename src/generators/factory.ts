@@ -1,5 +1,5 @@
 import { Blueprint } from "@etothepii/satisfactory-file-parser";
-import { BeltEnd, BlueprintBuilder, ConnectorRef, Placed, SIGN } from "../builder.js";
+import { BeltEnd, BlueprintBuilder, ConnectorRef, Placed } from "../builder.js";
 import { Vec3, add, transform, vec } from "../geometry.js";
 import { GameData, pickTier } from "../gamedata/index.js";
 import { PlanOptions, Step, fmt, plan } from "../planner/plan.js";
@@ -68,8 +68,9 @@ const PUMP_POLE = "Build_PowerPoleMk2_C";
 const PUMP_POLE_HEIGHT = 400;
 /** Rows are turned so inputs face +Y; their connection end is then at -X. */
 const ROW_YAW = 180;
-/** Signs float this far above the line they describe, and this far outside the routing grid for ports. */
-const SIGN_HEIGHT = 350;
+/** Small signs (icon, then "NAME rate" on one line), this far above the line they describe, and this far outside the routing grid for ports. */
+const SMALL_SIGN = "Build_StandaloneWidgetSign_Small_C";
+const SIGN_HEIGHT = 250;
 const SIGN_OFFSET = 150;
 const SIGN_BACKGROUND = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
 /** FICSIT orange for inputs, green for outputs, white for machine rows. */
@@ -85,6 +86,7 @@ const FLOW_TO_FRONT_YAW = -90;
 const TALL_ROW = 1300;
 /** Row poles hang from a ceiling (a slab or the roof) at most this high above their floor. */
 const MAX_HANG = 2000;
+const LADDER_SEGMENT = 200;
 
 interface PlacedRow {
   step: Step;
@@ -249,7 +251,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     if (!t) throw new Error(`${fmt(perMinute)}/min is more than one ${kind} carries; lower the rate or split the factory.`);
     return kind === "belt" ? Number(t.className.match(/Mk(\d)/)![1]) : /MK2/i.test(t.className) ? 2 : 1;
   };
-  const required = new Set<string>([FOUNDATION_TYPE, SIGN, options.pole === 2 ? "Build_PowerPoleWall_Mk2_C" : "Build_PowerPoleWall_C"]);
+  const required = new Set<string>([FOUNDATION_TYPE, SMALL_SIGN, options.pole === 2 ? "Build_PowerPoleWall_Mk2_C" : "Build_PowerPoleWall_C"]);
   for (const f of flows) {
     for (const rate of [f.perMinute, ...f.sinks.map((s) => s.perMinute)]) {
       const t = tierFor(f.kind, rate);
@@ -261,41 +263,17 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   }
   const b = new BlueprintBuilder(libraryFor(rows.map((r) => r.row), [...required]));
 
-  // Slabs under the rows and the rows themselves.
-  const slabs = floors.map((floor) => {
-    const e = floor.map(extentOf);
-    return {
-      minX: Math.floor(Math.min(...e.map((x) => x.minX)) / FOUNDATION) * FOUNDATION,
-      maxX: Math.ceil(Math.max(...e.map((x) => x.maxX)) / FOUNDATION) * FOUNDATION,
-      rows: e,
-    };
-  });
-  floors.forEach((floor, f) => {
-    // One strip of foundations per row, so the gaps between rows stay open for vertical lines.
-    if (floorZ[f] <= 0) return;
-    for (const e of slabs[f].rows) {
-      for (let x = slabs[f].minX; x < e.maxX; x += FOUNDATION) {
-        for (let y = Math.floor(e.minY / FOUNDATION) * FOUNDATION; y < e.maxY; y += FOUNDATION) {
-          b.place(FOUNDATION_TYPE, transform(vec(x + FOUNDATION / 2, y + FOUNDATION / 2, floorZ[f] - SLAB / 2)));
-        }
-      }
-    }
-  });
-  // What is over a spot of a floor: the lowest slab above that covers it, else the roof.
-  const ceilingOver = (f: number, x: number, y: number): number => {
-    for (let g = f + 1; g < floors.length; g++) {
-      if (floorZ[g] <= floorZ[f]) continue;
-      const covered = slabs[g].rows.some((e) => x >= slabs[g].minX && x <= e.maxX && y >= Math.floor(e.minY / FOUNDATION) * FOUNDATION && y <= e.maxY);
-      if (covered) return floorZ[g] - SLAB;
-    }
-    return roofZ;
+  // What is over a floor: the next floor up (a full slab), else the roof.
+  const levels = [...new Set(floorZ.filter((z) => z > 0))].sort((a, c) => a - c);
+  const ceilingOver = (f: number): number => {
+    const above = levels.find((z) => z > floorZ[f]);
+    return above !== undefined ? above - SLAB : roofZ;
   };
   for (const r of rows) {
     b.withFrame(transform(vec(r.x, r.y, floorZ[r.floor]), ROW_YAW), () => {
       const built = buildRow(b, r.row, {
-        ceilingAt: (spot) => {
-          // The row frame is turned 180°.
-          const height = ceilingOver(r.floor, r.x - spot.x, r.y - spot.y) - floorZ[r.floor];
+        ceilingAt: () => {
+          const height = ceilingOver(r.floor) - floorZ[r.floor];
           return height > r.row.height && height <= MAX_HANG ? height : undefined;
         },
       });
@@ -347,10 +325,6 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
       for (const p of r.poleTops!.filter((t) => t.hanging)) {
         grid.blockBox({ minX: p.position.x - CELL / 2, maxX: p.position.x + CELL / 2, minY: p.position.y - CELL / 2, maxY: p.position.y + CELL / 2, minZ: p.position.z - LEVEL, maxZ: p.position.z });
       }
-    });
-    floors.forEach((_, f) => {
-      if (f === 0) return;
-      for (const e of slabs[f].rows) grid.blockVerticalAt({ minX: slabs[f].minX - 150, maxX: e.maxX + 150, minY: e.minY - 150, maxY: e.maxY + 150 }, floorZ[f] - SLAB / 2);
     });
     return grid;
   };
@@ -535,12 +509,8 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   for (const port of ports) {
     const outward = port.side === "input" ? -1 : 1;
     b.sign(vec(port.at.x + outward * SIGN_OFFSET, port.at.y, port.at.z + SIGN_HEIGHT), port.side === "input" ? 180 : 0, {
-      texts: {
-        // The sign layout shows only its main text, so the rate goes next to the item.
-        Name: `${port.flow.label.toUpperCase()} ${fmt(port.flow.perMinute)}${units(port.flow)}`,
-        Other_0: `${port.side === "input" ? "INPUT" : "OUTPUT"} · ${port.flow.kind} Mk${tierFor(port.flow.kind, port.flow.perMinute)}`,
-        Other_1: `${fmt(port.flow.perMinute)}${units(port.flow)}`,
-      },
+      type: SMALL_SIGN,
+      texts: { Name: `${port.flow.label.toUpperCase()} ${fmt(port.flow.perMinute)}${units(port.flow)}` },
       icon: iconFor(port.flow.label),
       text: port.side === "input" ? INPUT_COLOR : OUTPUT_COLOR,
       background: SIGN_BACKGROUND,
@@ -551,11 +521,8 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     const levels = Math.max(r.row.inputLines.length, r.row.outputLines.length) - 1;
     const rate = r.step.outputs.find((o) => o.item.className === r.step.product.className)!.perMinute;
     b.sign(vec(e.minX - CELL / 2, (e.minY + e.maxY) / 2, floorZ[r.floor] + 100 + levels * LEVEL + SIGN_HEIGHT), 180, {
-      texts: {
-        Name: `${r.step.product.name.toUpperCase()} ${fmt(rate)}/min`,
-        Other_0: `${r.row.options.count}x ${r.row.spec.key}${(r.row.options.clocks ?? []).some((c) => Math.abs(c - 1) > 1e-6) ? ` (last at ${fmt((r.row.options.clocks ?? []).slice(-1)[0] * 100)}%)` : ""}`,
-        Other_1: `${fmt(rate)}/min`,
-      },
+      type: SMALL_SIGN,
+      texts: { Name: `${r.step.product.name.toUpperCase()} ${fmt(rate)}/min` },
       icon: iconFor(r.step.product.name),
       text: ROW_COLOR,
       background: SIGN_BACKGROUND,
@@ -568,15 +535,84 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     minX: origin.x - CELL / 2, maxX: origin.x + (size.nx - 0.5) * CELL,
     minY: origin.y - CELL, maxY: origin.y + size.ny * CELL,
   };
-  // The door goes where the ground cells just inside it are free (no line or machine in the way).
+  // A style picked from the product name, so each factory looks a little different.
+  const style = [...production.target.item.name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
+
+  // Upper floors: full slabs over the whole building, cut out where a tall row rises through, with a
+  // Floor Hole wherever a lift or pipe crosses, and an opening by a side wall with a ladder up to it.
+  const floorType = b.pick(...(style % 2 ? ["Build_Foundation_Metal_8x1_C"] : []), FOUNDATION_TYPE)!;
+  const ladderType = b.pick("Build_Ladder_C");
+  const liftHole = b.pick("Build_FoundationPassthrough_Lift_C");
+  const pipeHole = b.pick("Build_FoundationPassthrough_Pipe_C");
+  type Tile = { x0: number; y0: number; x1: number; y1: number };
+  const overlaps = (t: Tile, e: { minX: number; maxX: number; minY: number; maxY: number }) => t.x0 < e.maxX && t.x1 > e.minX && t.y0 < e.maxY && t.y1 > e.minY;
+  const tileAt = (x: number, y: number): Tile => {
+    const x0 = envelope.minX + Math.floor((x - envelope.minX) / FOUNDATION) * FOUNDATION;
+    const y0 = envelope.minY + Math.floor((y - envelope.minY) / FOUNDATION) * FOUNDATION;
+    return { x0, y0, x1: x0 + FOUNDATION, y1: y0 + FOUNDATION };
+  };
+  const key = (z: number, t: Tile) => `${z}:${t.x0}:${t.y0}`;
+  const solid = new Set<string>();
+  const ladders: Vec3[] = [];
+  let lastOpening: Tile | undefined;
+  levels.forEach((z, n) => {
+    const below = n === 0 ? 0 : levels[n - 1];
+    const cutouts = rows.filter((r) => tall(r) && floorZ[r.floor] < z && floorZ[r.floor] + r.row.height > z - SLAB - HEADROOM).map(extentOf);
+    const standing = rows.filter((r) => floorZ[r.floor] === z).map(extentOf);
+    const tiles: Tile[] = [];
+    for (let x = envelope.minX; x < envelope.maxX; x += FOUNDATION) {
+      for (let y = envelope.minY; y < envelope.maxY; y += FOUNDATION) tiles.push({ x0: x, y0: y, x1: x + FOUNDATION, y1: y + FOUNDATION });
+    }
+    // The ladder opening: a tile against a side wall, with nothing standing on it or rising through
+    // it, and not above the opening of the floor below (the ladder stands on solid floor).
+    const opening = !ladderType ? undefined : tiles
+      .filter((t) => t.y0 === envelope.minY || t.y1 === envelope.maxY)
+      .find((t) => !standing.some((e) => overlaps(t, e)) && !cutouts.some((e) => overlaps(t, e))
+        && !(lastOpening && lastOpening.x0 === t.x0 && lastOpening.y0 === t.y0));
+    for (const t of tiles) {
+      if (t === opening || cutouts.some((e) => overlaps(t, e))) continue;
+      b.place(floorType, transform(vec(t.x0 + FOUNDATION / 2, t.y0 + FOUNDATION / 2, z - SLAB / 2)));
+      solid.add(key(z, t));
+    }
+    if (opening) {
+      // A ladder stands with its back 50 cm from the wall (learned from real blueprints); one segment is about 2 m.
+      const onRight = opening.y0 === envelope.minY;
+      const at = vec((opening.x0 + opening.x1) / 2, onRight ? envelope.minY + 50 : envelope.maxY - 50, below);
+      const ladder = b.place(ladderType!, transform(at, onRight ? 90 : -90));
+      const props = ladder.entity.properties as any;
+      if (props.mNumSegments) props.mNumSegments.value = Math.ceil((z - below) / LADDER_SEGMENT);
+      ladders.push(at);
+      lastOpening = opening;
+    }
+  });
+  // Floor Holes where lifts and vertical pipes cross a floor (in the middle of the slab, as in real blueprints).
+  for (const line of lines) {
+    const hole = line.flow.kind === "belt" ? liftHole : pipeHole;
+    if (!hole) continue;
+    for (const step of line.route.steps) {
+      if (step.kind !== "rise") continue;
+      const c = grid.center(step.cell);
+      const [low, high] = [c.z, c.z + step.levels * LEVEL].sort((a, d) => a - d);
+      for (const z of levels) {
+        if (z - SLAB / 2 <= low || z - SLAB / 2 >= high || !solid.has(key(z, tileAt(c.x, c.y)))) continue;
+        const placed = b.place(hole, transform(vec(c.x, c.y, z - SLAB / 2)));
+        const props = placed.entity.properties as any;
+        delete props.mBottomSnappedConnection;
+        delete props.mTopSnappedConnection;
+      }
+    }
+  }
+
+  // The door goes where the ground cells just inside it are free (no line, machine or ladder in the way).
   const doorway = (at: Vec3, inward: Vec3) => {
+    if (ladders.some((l) => l.z === 0 && Math.hypot(l.x - at.x, l.y - at.y) < FOUNDATION)) return false;
     const along = vec(-inward.y, inward.x, 0);
     const cells = [CELL / 2, CELL].flatMap((d) => [-CELL / 2, CELL / 2].map((s) =>
       grid.cellAt(vec(at.x + inward.x * d + along.x * s, at.y + inward.y * d + along.y * s, origin.z))));
     const inside = cells.filter((c) => grid.inside(c));
     return inside.length > 0 && inside.every((c) => grid.isFree(c));
   };
-  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })), doorway });
+  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })), doorway, style });
   if (shell.inlet) {
     const first = rows[0].poleTops![0];
     b.wire({ building: shell.inlet.pole, name: b.powerConnector(shell.inlet.pole), position: shell.inlet.position }, { building: first.pole, name: b.powerConnector(first.pole), position: first.position });
