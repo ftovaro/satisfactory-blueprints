@@ -1,0 +1,32 @@
+{
+  "name": "satisfactory-blueprints",
+  "version": "0.1.0",
+  "description": "Inspect and generate Satisfactory blueprint files (.sbp / .sbpcfg) from the command line.",
+  "type": "module",
+  "bin": {
+    "sbp": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "sbp": "tsx src/cli.ts"
+  },
+  "keywords": [
+    "satisfactory",
+    "blueprint",
+    "sbp",
+    "factory"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@etothepii/satisfactory-file-parser": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

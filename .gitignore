@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+
+# Local blueprint dumps and generated output. Blueprint configs can contain player account
+# identifiers, so keep real game files out of the repository.
+out/
+*.sbp
+*.sbpcfg
+*.dump.json
