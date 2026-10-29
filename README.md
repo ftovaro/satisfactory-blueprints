@@ -46,19 +46,33 @@ npm run sbp -- scan
 
 A blueprint can be given as `Session/Name` (relative to the blueprint folder) or as a full path to an `.sbp` file.
 
+### Game data and planning
+
+The planner reads recipes, items and machines from your own game install (`CommunityResources/Docs/en-US.json`). Import them once, and again after game updates:
+
+```bash
+npm run sbp -- import-game-data            # add --game-dir <path> if the game is not in the default Steam folder
+npm run sbp -- recipes "Screw"
+npm run sbp -- plan "Motor" 10
+npm run sbp -- plan "Reinforced Iron Plate" 15 --recipe "Screw=Steel Screws" --input "Steel Beam"
+```
+
+A plan lists every production step with its machine count and clock speeds (all machines at 100% except the last one), the belt or pipe tier each flow needs, byproducts, and total power.
+
 ### Generating blueprints
 
 ```bash
-npm run sbp -- generate row --machine constructor --count 4 --recipe IronPlate --belt 2 --session "My Session"
+npm run sbp -- generate row --recipe "Iron Plate" --rate 45 --session "My Session"
 npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --out-dir ./out
 ```
 
 | Option      | Meaning                                                                 |
 |-------------|-------------------------------------------------------------------------|
-| `--machine` | `constructor` or `smelter`                                              |
-| `--count`   | number of machines in the row                                           |
-| `--recipe`  | optional recipe, e.g. `IronPlate`, `Screw`, `Wire`, `IngotIron` (or a full recipe path) |
-| `--belt`    | conveyor tier 1-5 (default 1)                                           |
+| `--rate`    | target output per minute; sizes the row with the planner (needs `--recipe`, any recipe name) |
+| `--machine` | `constructor` or `smelter` (with `--count`)                             |
+| `--count`   | number of machines in the row, all at 100%                              |
+| `--recipe`  | recipe, e.g. `Iron Plate`, `Cast Screws`, `IngotIron` (or a full recipe path) |
+| `--belt`    | conveyor tier 1-6 (default: the slowest tier that carries the flow with `--rate`, otherwise 1) |
 | `--pole`    | power pole tier 1-2 (default 1)                                         |
 | `--session` | write straight into that session's blueprint folder                     |
 | `--out-dir` | write to any folder instead                                             |
@@ -109,8 +123,8 @@ Buildings:
 1. ~~Read, inspect and round-trip blueprints~~
 2. ~~Learn connector positions from real blueprints~~
 3. Generate simple modules (a row of machines with input/output manifolds and power): first version done, in-game testing pending
-4. Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts
-5. Recipe and ratio calculator
+4. ~~Recipe and ratio planner from the game's own data~~
+5. Multi-input machines (assemblers, foundries, manufacturers) using conveyor lifts
 6. Full production lines (for example Motors, Computers, Heavy Modular Frames) written straight into a session folder
 
 ## Safety notes

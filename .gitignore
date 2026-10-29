@@ -8,3 +8,6 @@ out/
 *.sbp
 *.sbpcfg
 *.dump.json
+
+# Converted from the game's own Docs file; owned by Coffee Stain Studios, regenerate with import-game-data.
+data/game/

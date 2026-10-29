@@ -22,8 +22,13 @@ import { selectLibrary } from "../templates.js";
 export interface MachineRowOptions {
   machine: string;
   count: number;
+  /** Short recipe name from the machine spec, or a full recipe path. */
   recipe?: string;
-  /** Conveyor tier 1-5. */
+  /** Clock speed per machine (fraction, 1 = 100%); defaults to 100% for all. */
+  clocks?: number[];
+  /** Label used in the default name, e.g. "45 Iron Plate". */
+  label?: string;
+  /** Conveyor tier 1-6. */
   belt?: number;
   /** Power pole tier 1-2. */
   pole?: number;
@@ -64,6 +69,8 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
   for (let i = 0; i < options.count; i++) {
     const machine = b.place(spec.type, transform(vec(xOf(i), 0, 0)));
     if (options.recipe) b.setRecipe(machine, findRecipe(spec, options.recipe));
+    const clock = options.clocks?.[i] ?? 1;
+    if (Math.abs(clock - 1) > 1e-6) b.setClock(machine, clock);
     machines.push(machine);
   }
 
@@ -119,7 +126,7 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
     previousTop = { pole, position: top };
   }
 
-  const recipeLabel = options.recipe ? ` ${options.recipe}` : "";
+  const recipeLabel = options.label ? ` ${options.label}` : options.recipe && !options.recipe.startsWith("/") ? ` ${options.recipe}` : "";
   const name = options.name ?? `${options.count}x ${capitalize(spec.key)}${recipeLabel} Mk${options.belt ?? 1}`;
   return b.build(name, {
     description: `${options.count} ${spec.key}(s)${recipeLabel}. Input: left end of the splitter line. Output: right end of the merger line.`,

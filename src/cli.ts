@@ -10,6 +10,12 @@ import { CONNECTOR_FILE } from "./connectors.js";
 import { TEMPLATE_FILE, extractTemplates, saveTemplates } from "./templates.js";
 import { generateMachineRow } from "./generators/machine-row.js";
 import { GENERATED_MARKER } from "./builder.js";
+import { GAME_DATA_FILE, findItem, findRecipe as findGameRecipe, loadGameData, pickTier, recipesFor } from "./gamedata/index.js";
+import { findDocsFile, importGameData } from "./gamedata/import.js";
+import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
+import { MachineRowOptions } from "./generators/machine-row.js";
+import { MACHINES } from "./data/machines.js";
+import { formatPlan } from "./planner/format.js";
 
 const USAGE = `Usage: sbp <command> [options]
 
@@ -22,9 +28,15 @@ Commands:
   scan [session]              Parse every blueprint and report which ones fail
   connectors                  Print the belt/pipe connector positions learned from all blueprints
   learn                       Rebuild data/templates.json and data/connectors.json from your blueprints
-  generate row --machine <constructor|smelter> --count <n> [--recipe <name>] [--belt <1-5>] [--pole <1-2>]
-               (--session <name> | --out-dir <path>) [--name <blueprint name>] [--force]
-                              Generate a row of machines with input/output manifolds and power
+  import-game-data [--game-dir <path>]
+                              Read recipes, items and machines from your Satisfactory install
+  recipes <item>              List the recipes that produce an item
+  plan <item> <rate per min> [--recipe "<item>=<recipe>"]... [--input <item>]...
+                              Plan a production chain: machines, clock speeds, belts and power
+  generate row --machine <constructor|smelter> (--count <n> | --rate <per min>) [--recipe <name>]
+               [--belt <1-6>] [--pole <1-2>] (--session <name> | --out-dir <path>) [--name <name>] [--force]
+                              Generate a row of machines with input/output manifolds and power.
+                              With --rate, all machines run at 100% except the last one.
 
 Options:
   --dir <path>   Blueprint root folder (default: %LOCALAPPDATA%\\FactoryGame\\Saved\\SaveGames\\blueprints,
@@ -36,17 +48,21 @@ Options:
 interface Args {
   command?: string;
   positional: string[];
+  /** Last value of each flag. */
   flags: Record<string, string | true>;
+  /** Every value of flags that may repeat, e.g. --recipe a --recipe b. */
+  repeated: Record<string, string[]>;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { positional: [], flags: {} };
+  const args: Args = { positional: [], flags: {}, repeated: {} };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("--")) {
         args.flags[arg.slice(2)] = next;
+        (args.repeated[arg.slice(2)] ??= []).push(next);
         i++;
       } else {
         args.flags[arg.slice(2)] = true;
@@ -177,21 +193,13 @@ function cmdGenerate(root: string, args: Args): void {
 
   const flag = (name: string) => (typeof args.flags[name] === "string" ? (args.flags[name] as string) : undefined);
   const number = (name: string) => (flag(name) !== undefined ? Number(flag(name)) : undefined);
-  if (!flag("machine") || number("count") === undefined) throw new Error('"generate row" needs --machine and --count.');
-
   const session = flag("session");
   const outDir = flag("out-dir") ?? (session ? path.join(root, session) : undefined);
   if (!outDir) throw new Error("Pass --session <name> to install into a game session, or --out-dir <path>.");
   if (session && !fs.existsSync(outDir)) throw new Error(`Session folder not found: ${outDir}. Existing sessions: ${listSessions(root).join(", ")}`);
 
-  const blueprint = generateMachineRow({
-    machine: flag("machine")!,
-    count: number("count")!,
-    recipe: flag("recipe"),
-    belt: number("belt"),
-    pole: number("pole"),
-    name: flag("name"),
-  });
+  const options = number("rate") !== undefined ? rowFromRate(flag("recipe"), number("rate")!, number("belt")) : rowFromCount(flag("machine"), number("count"), flag("recipe"), number("belt"));
+  const blueprint = generateMachineRow({ ...options, pole: number("pole"), name: flag("name") });
 
   const fileName = blueprint.name.replace(/[<>:"/\\|?*]/g, "_");
   if (fs.existsSync(path.join(outDir, `${fileName}.sbp`)) && args.flags.force !== true) {
@@ -204,6 +212,75 @@ function cmdGenerate(root: string, args: Args): void {
   if ((blueprint.header.designerDimension?.x ?? 0) > 6) {
     console.log("Warning: this layout is larger than the biggest Blueprint Designer (6 x 6 foundations).");
   }
+}
+
+type RowOptions = Omit<MachineRowOptions, "pole" | "name">;
+
+function rowFromCount(machine: string | undefined, count: number | undefined, recipe: string | undefined, belt: number | undefined): RowOptions {
+  if (!machine || count === undefined) throw new Error('"generate row" needs --rate and --recipe, or --machine and --count.');
+  return { machine, count, recipe, belt };
+}
+
+/** Sizes the row with the planner: machines at 100% except the last, belts fast enough for the main lines. */
+function rowFromRate(recipeQuery: string | undefined, rate: number, belt: number | undefined): RowOptions {
+  if (!recipeQuery) throw new Error('"generate row --rate" needs --recipe (any recipe name, e.g. "Iron Plate" or "Cast Screws").');
+  const data = loadGameData();
+  const recipe = findGameRecipe(data, recipeQuery);
+  const spec = Object.values(MACHINES).find((m) => m.type === recipe.machine);
+  if (!spec) throw new Error(`"${recipe.name}" runs in a ${data.machines[recipe.machine].name}; rows support: ${Object.keys(MACHINES).join(", ")}.`);
+
+  const product = recipe.outputs[0].item;
+  const scale = rate / perMinute(recipe, product, "outputs");
+  const clocks = machineClocks(rate, perMinute(recipe, product, "outputs"));
+  // The main lines carry the whole input and output flow.
+  const mainFlow = Math.max(...[...recipe.inputs.map((f) => perMinute(recipe, f.item, "inputs")), ...recipe.outputs.map((f) => perMinute(recipe, f.item, "outputs"))].map((r) => r * scale));
+  const tier = pickTier(data.belts, mainFlow);
+  if (!tier && belt === undefined) throw new Error(`${fmt(mainFlow)}/min is more than one belt can carry; split the request into several rows.`);
+  const autoBelt = tier ? Number(tier.className.match(/Mk(\d)/)![1]) : undefined;
+
+  console.log(`${spec.key}: ${clocks.length} machine(s), clocks ${clocks.map((c) => `${fmt(c * 100)}%`).join(", ")}; main belts carry up to ${fmt(mainFlow)}/min -> Mk${belt ?? autoBelt}\n`);
+  return {
+    machine: spec.key,
+    count: clocks.length,
+    clocks,
+    recipe: recipe.path,
+    label: `${fmt(rate)} ${data.items[product].name}`,
+    belt: belt ?? autoBelt,
+  };
+}
+
+function cmdImportGameData(args: Args): void {
+  const docs = findDocsFile(typeof args.flags["game-dir"] === "string" ? args.flags["game-dir"] : undefined);
+  const data = importGameData(docs);
+  fs.mkdirSync(path.dirname(GAME_DATA_FILE), { recursive: true });
+  fs.writeFileSync(GAME_DATA_FILE, JSON.stringify(data));
+  console.log(`Read ${docs}`);
+  console.log(`${Object.keys(data.items).length} items, ${Object.keys(data.recipes).length} machine recipes, ${Object.keys(data.machines).length} machines -> ${GAME_DATA_FILE}`);
+}
+
+function cmdRecipes(args: Args): void {
+  const query = args.positional.join(" ");
+  if (!query) throw new Error('"recipes" needs an item name.');
+  const data = loadGameData();
+  const item = findItem(data, query);
+  for (const r of recipesFor(data, item.className)) {
+    const io = (flows: typeof r.inputs, side: "inputs" | "outputs") =>
+      flows.map((f) => `${fmt(perMinute(r, f.item, side))} ${data.items[f.item]?.name ?? f.item}`).join(" + ");
+    console.log(`${r.name.padEnd(36)} ${data.machines[r.machine].name.padEnd(14)} ${io(r.inputs, "inputs")} -> ${io(r.outputs, "outputs")} (per min)`);
+  }
+}
+
+function cmdPlan(args: Args): void {
+  const rate = Number(args.positional[args.positional.length - 1]);
+  const item = args.positional.slice(0, -1).join(" ");
+  if (!item || !(rate > 0)) throw new Error('Usage: sbp plan <item> <rate per minute>, e.g. sbp plan "Motor" 10');
+  const data = loadGameData();
+  const recipes = Object.fromEntries((args.repeated.recipe ?? []).map((pair) => {
+    const [itemQuery, recipeQuery] = pair.split("=");
+    if (!recipeQuery) throw new Error(`--recipe expects "<item>=<recipe>", got "${pair}".`);
+    return [itemQuery.trim(), recipeQuery.trim()];
+  }));
+  console.log(formatPlan(plan(data, item, rate, { recipes, inputs: args.repeated.input }), data));
 }
 
 function cmdConnectors(root: string): void {
@@ -243,6 +320,12 @@ function main(): void {
       return cmdLearn(root);
     case "generate":
       return cmdGenerate(root, args);
+    case "import-game-data":
+      return cmdImportGameData(args);
+    case "recipes":
+      return cmdRecipes(args);
+    case "plan":
+      return cmdPlan(args);
     default:
       console.log(USAGE);
   }
