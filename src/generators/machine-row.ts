@@ -7,8 +7,9 @@ import { selectLibrary } from "../templates.js";
 import type { ConnectorStats } from "../analysis/connectors.js";
 
 /**
- * A row of identical machines with one splitter manifold per input and a merger manifold collecting
- * the output, powered by a chain of power poles. Seen from above (one input):
+ * A row of identical machines with one manifold per input and one per output, powered by a chain
+ * of power poles. Solids use splitter/merger manifolds on belts; fluids use pipe manifolds built
+ * from Junction Crosses (see src/fluids for the rules they follow). Seen from above, one input:
  *
  *        merger --- merger --- merger ---> output (right end)
  *          |          |          |
@@ -16,16 +17,30 @@ import type { ConnectorStats } from "../analysis/connectors.js";
  *          |          |          |
  *  input -> splitter - splitter - splitter
  *
- * Machines with several inputs (Assembler, Foundry, Manufacturer) have them all on the same face, so
- * flat manifolds would cross. Extra inputs get their own manifold stacked 4 m higher per level, and
- * each splitter drops its items into the machine through a Conveyor Lift. Seen from the side:
+ * When a side has several ports they would cross, so each extra one gets its own manifold stacked
+ * 4 m higher. Seen from the side, on the input side:
  *
- *   level 2  splitter --> lift ┐
- *   level 1  splitter --> lift ┤
- *   level 0  splitter ---------┴--> [machine]
+ *   level 2  splitter --> lift ┐             (belts drop through Conveyor Lifts)
+ *   level 1  junction ~~~~~~~~~┤             (pipes curve down; going down needs no head lift)
+ *   level 0  junction ---------┴--> [machine]
  *
- * Every input line starts at the left end; the output leaves the right end of the merger line.
+ * Fluids take the lowest input levels (so whatever feeds them needs the least head lift) and the
+ * upper output levels (machines push fluids up to 10 m). Pipe input manifolds feeding 3 or more
+ * machines get a loopback pipe, as the wiki recommends.
+ *
+ * Finally the layout is rotated so inputs enter at the back of the blueprint and products leave at
+ * the front, through open belt/pipe ends on the designer boundary that Auto-Connect can use.
  */
+
+export type LineKind = "belt" | "pipe";
+
+export interface PortSpec {
+  /** Item or fluid name, for the description. */
+  label: string;
+  kind: LineKind;
+  /** Items (or m³) per minute per machine at its clock; enables per-segment tier sizing. */
+  perMachine?: number[];
+}
 
 export interface MachineRowOptions {
   machine: string;
@@ -36,17 +51,13 @@ export interface MachineRowOptions {
   clocks?: number[];
   /** Label used in the default name, e.g. "45 Iron Plate". */
   label?: string;
-  /** Number of input connectors to feed (the recipe's ingredient count); defaults to all. */
-  inputCount?: number;
-  /** Item name per input connector (in machine connector order), shown in the description. */
-  inputLabels?: string[];
+  /** Recipe ingredients and products in recipe order; defaults to the machine's belt connectors. */
+  inputs?: PortSpec[];
+  outputs?: PortSpec[];
+  /** Items/min of belts Mk1..Mk6 and m³/min of pipes Mk1..Mk2, from the game data. */
+  speeds?: { belt: number[]; pipe: number[] };
   /** Force one conveyor tier (1-6) everywhere instead of sizing each segment. */
   belt?: number;
-  /** Items/min each machine consumes per input connector (outer index) and produces; enables per-segment belt sizing. */
-  inputPerMachine?: number[][];
-  outputPerMachine?: number[];
-  /** Items/min of belt Mk1..Mk6, from the game data. */
-  beltSpeeds?: number[];
   /** Power pole tier 1-2. */
   pole?: number;
   name?: string;
@@ -54,137 +65,161 @@ export interface MachineRowOptions {
 
 /** Length (cm) of the short belts between a machine connector and its splitter/merger. */
 const FEEDER_LENGTH = 200;
-/** Distance (cm) from a splitter/merger center to its belt connectors. */
+/** Distance (cm) from a splitter/merger/junction center to its connectors. */
 const ATTACHMENT_RADIUS = 100;
-/** Belt height above the floor (cm); machine connectors sit at this height. */
+/** Belt height above the floor (cm); machine belt connectors sit at this height. */
 const BELT_HEIGHT = 100;
-/** Vertical distance (cm) between stacked input manifolds: one wall. */
+/** Vertical distance (cm) between stacked manifolds: one wall. */
 const LEVEL_HEIGHT = 400;
 /** Distance (cm) from a machine input to the lift that feeds it. */
 const LIFT_SETBACK = 300;
-/** Distance (cm) from a machine input to the stacked manifolds when there are several inputs. */
+/** Distance (cm) from the machine face to stacked manifolds when a side has several ports. */
 const STACKED_MANIFOLD_SETBACK = 700;
+/** Distance (cm) of the loopback pipe from its manifold, and how far past the row its junctions sit. */
+const LOOPBACK_OFFSET = 400;
+const LOOPBACK_MIN_MACHINES = 3;
 /** Approximate height (cm) where wires attach to a power pole. */
 const POLE_HEIGHT = 400;
 const FOUNDATION = 800;
 /**
  * The row is laid out with the flow running along +X. The blueprint's front (its placement arrow)
- * is -Y, so rotating by -90° makes the product leave toward the arrow.
+ * is -Y, so rotating by -90° makes the products leave toward the arrow.
  */
 const FLOW_TO_FRONT_YAW = -90;
 
+const SPLITTER = "Build_ConveyorAttachmentSplitter_C";
+const MERGER = "Build_ConveyorAttachmentMerger_C";
+const JUNCTION = "Build_PipelineJunction_Cross_C";
+const beltType = (tier: number) => `Build_ConveyorBeltMk${tier}_C`;
+const liftType = (tier: number) => `Build_ConveyorLiftMk${tier}_C`;
+const pipeType = (tier: number) => (tier === 1 ? "Build_Pipeline_C" : "Build_PipelineMK2_C");
+
 /**
- * Belt tiers of one manifold line.
+ * Tiers of one manifold line.
  *
- * In steady state, a splitter line between splitter i and i+1 only carries what machines i+1..n
- * consume, and a merger line after merger i carries what machines 0..i produced. Segments get
- * slower belts toward the far end of an input line and faster ones toward the exit of the output line.
+ * In steady state, an input line between attachment i and i+1 only carries what machines i+1..n
+ * consume, and an output line after attachment i carries what machines 0..i produced. Segments get
+ * slower tiers toward the far end of an input line and faster ones toward the exit of an output line.
  */
-export interface LineBelts {
+export interface LineTiers {
   feeders: number[];
   /** chain[i] is the segment between attachment i and attachment i+1. */
   chain: number[];
-  /** Tier of the belt entering (input line) or leaving (output line) the row. */
+  /** Tier of the belt/pipe entering (input line) or leaving (output line) the row. */
   end: number;
 }
 
-export interface BeltPlan {
-  inputs: LineBelts[];
-  output: LineBelts;
-}
-
-export function planBelts(
-  count: number,
-  inputCount: number,
-  options: Pick<MachineRowOptions, "belt" | "inputPerMachine" | "outputPerMachine" | "beltSpeeds">,
-): BeltPlan {
-  const { inputPerMachine: ins, outputPerMachine: outs, beltSpeeds: speeds } = options;
-  if (options.belt !== undefined || !ins || !outs || !speeds) {
-    const tier = options.belt ?? 1;
-    const fixed = (): LineBelts => ({ feeders: new Array(count).fill(tier), chain: new Array(Math.max(0, count - 1)).fill(tier), end: tier });
-    return { inputs: Array.from({ length: inputCount }, fixed), output: fixed() };
+export function planLine(count: number, side: "input" | "output", port: PortSpec, options: Pick<MachineRowOptions, "belt" | "speeds">): LineTiers {
+  const speeds = options.speeds?.[port.kind];
+  const fixedTier = port.kind === "belt" ? options.belt : undefined;
+  if (fixedTier !== undefined || !port.perMachine || !speeds) {
+    const tier = fixedTier ?? 1;
+    return { feeders: new Array(count).fill(tier), chain: new Array(Math.max(0, count - 1)).fill(tier), end: tier };
   }
   const tier = (flow: number) => {
     const index = speeds.findIndex((s) => s + 1e-9 >= flow);
-    if (index < 0) throw new Error(`${flow.toFixed(2)}/min is more than the fastest belt carries; split the row.`);
+    if (index < 0) throw new Error(`${port.label}: ${flow.toFixed(2)}/min is more than the fastest ${port.kind} carries; split the row.`);
     return index + 1;
   };
   const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
-  const splitLine = (perMachine: number[]): LineBelts => ({
-    feeders: perMachine.map(tier),
-    chain: perMachine.slice(1).map((_, i) => tier(sum(perMachine.slice(i + 1)))),
-    end: tier(sum(perMachine)),
-  });
+  const flows = port.perMachine;
   return {
-    inputs: ins.map(splitLine),
-    output: {
-      feeders: outs.map(tier),
-      chain: outs.slice(1).map((_, i) => tier(sum(outs.slice(0, i + 1)))),
-      end: tier(sum(outs)),
-    },
+    feeders: flows.map(tier),
+    chain: flows.slice(1).map((_, i) => tier(side === "input" ? sum(flows.slice(i + 1)) : sum(flows.slice(0, i + 1)))),
+    end: tier(sum(flows)),
   };
+}
+
+/** A port matched to the machine connector that serves it, with its stacking level. */
+interface Line {
+  port: PortSpec;
+  connector: ConnectorStats;
+  /** Connector offset in the layout frame (machine possibly turned 180°). */
+  offset: Vec3;
+  level: number;
+  tiers: LineTiers;
 }
 
 export function generateMachineRow(options: MachineRowOptions): Blueprint {
   const spec = findMachine(options.machine);
   if (!Number.isInteger(options.count) || options.count < 1) throw new Error("count must be a positive integer.");
+  const all = connectorsOf(spec.type);
+  const connectorsFor = (side: "input" | "output", kind: LineKind) =>
+    all.filter((c) => c.kind === kind && (side === "input" ? /input/i : /output/i).test(c.name));
 
-  // Machines accept any ingredient on any input, so a recipe with fewer ingredients uses the first connectors only.
-  const inputs = connectorsOf(spec.type).filter((c) => c.kind === "belt" && /^input/i.test(c.name)).slice(0, options.inputCount);
-  const outputs = connectorsOf(spec.type).filter((c) => c.kind === "belt" && /^output/i.test(c.name));
-  if (inputs.length < 1 || outputs.length !== 1) {
-    throw new Error(`${spec.key} has ${inputs.length} belt inputs and ${outputs.length} belt outputs; rows need at least one input and exactly one output.`);
-  }
-  if (connectorsOf(spec.type).some((c) => c.kind === "pipe")) throw new Error(`${spec.key} uses pipes; fluid machines are handled by the fluids module.`);
-  const output = outputs[0];
-  const stacked = inputs.length > 1;
+  const inputPorts = options.inputs ?? connectorsFor("input", "belt").map((c, i) => ({ label: `input ${i + 1}`, kind: "belt" as const }));
+  const outputPorts = options.outputs ?? connectorsFor("output", "belt").slice(0, 1).map(() => ({ label: "output", kind: "belt" as const }));
+  if (inputPorts.length === 0 || outputPorts.length === 0) throw new Error(`${spec.key} needs at least one input and one output.`);
 
-  const belts = planBelts(options.count, inputs.length, options);
-  const beltType = (tier: number) => `Build_ConveyorBeltMk${tier}_C`;
-  const liftType = (tier: number) => `Build_ConveyorLiftMk${tier}_C`;
-  const allTiers = [...belts.inputs.flatMap((l) => [...l.feeders, ...l.chain, l.end]), ...belts.output.feeders, ...belts.output.chain, belts.output.end];
-  const liftTiers = stacked ? belts.inputs.slice(1).flatMap((l) => l.feeders) : [];
-  const splitterType = "Build_ConveyorAttachmentSplitter_C";
-  const mergerType = "Build_ConveyorAttachmentMerger_C";
+  // Machines take any ingredient on any connector of the right kind, so assign them in order.
+  const assign = (side: "input" | "output", ports: PortSpec[]) => {
+    const used = new Map<LineKind, number>();
+    return ports.map((port) => {
+      const index = used.get(port.kind) ?? 0;
+      used.set(port.kind, index + 1);
+      const candidates = connectorsFor(side, port.kind);
+      if (!candidates[index]) {
+        throw new Error(`No learned ${port.kind} ${side} connector #${index + 1} for ${spec.key} (${port.label}). Add a blueprint using this machine that way and run "sbp learn".`);
+      }
+      return { port, connector: candidates[index] };
+    });
+  };
+  const inputs = assign("input", inputPorts);
+  const outputs = assign("output", outputPorts);
+
+  // The layout expects inputs on the machine's -Y face; turn machines that have them on +Y.
+  const turned = inputs[0].connector.normal.y > 0;
+  const machineYaw = turned ? 180 : 0;
+  const local = (c: ConnectorStats): Vec3 => (turned ? vec(-c.offset.x, -c.offset.y, c.offset.z) : c.offset);
+
+  // Fluids get the lowest input levels and the highest output levels.
+  const order = (side: "input" | "output") => (a: { port: PortSpec }, b: { port: PortSpec }) => {
+    const rank = (p: PortSpec) => (side === "input" ? (p.kind === "pipe" ? 0 : 1) : p.kind === "belt" ? 0 : 1);
+    return rank(a.port) - rank(b.port);
+  };
+  const toLines = (side: "input" | "output", list: { port: PortSpec; connector: ConnectorStats }[]): Line[] =>
+    [...list].sort(order(side)).map((l, level) => ({ ...l, offset: local(l.connector), level, tiers: planLine(options.count, side, l.port, options) }));
+  const inputLines = toLines("input", inputs);
+  const outputLines = toLines("output", outputs);
+  if (outputLines.some((l) => l.port.kind === "belt" && l.level > 0)) throw new Error(`${spec.key}: more than one belt output is not supported.`);
+
   const poleType = `Build_PowerPoleMk${options.pole ?? 1}_C`;
-  const b = new BlueprintBuilder(selectLibrary([
-    spec.type, splitterType, mergerType, poleType, "Build_PowerLine_C",
-    ...new Set(allTiers.map(beltType)), ...new Set(liftTiers.map(liftType)),
-  ]));
+  const lines = [...inputLines, ...outputLines];
+  const typesOf = (kind: LineKind, pick: (t: LineTiers) => number[]) =>
+    lines.filter((l) => l.port.kind === kind).flatMap((l) => pick(l.tiers));
+  const allTiers = (t: LineTiers) => [...t.feeders, ...t.chain, t.end];
+  const required = new Set<string>([spec.type, poleType, "Build_PowerLine_C"]);
+  typesOf("belt", allTiers).forEach((t) => required.add(beltType(t)));
+  typesOf("pipe", allTiers).forEach((t) => required.add(pipeType(t)));
+  inputLines.filter((l) => l.port.kind === "belt" && l.level > 0).forEach((l) => l.tiers.feeders.forEach((t) => required.add(liftType(t))));
+  if (lines.some((l) => l.port.kind === "pipe")) required.add(JUNCTION);
+  if (inputLines.some((l) => l.port.kind === "belt")) required.add(SPLITTER);
+  if (outputLines.some((l) => l.port.kind === "belt")) required.add(MERGER);
+  const b = new BlueprintBuilder(selectLibrary([...required]));
 
   const rowLength = (options.count - 1) * spec.pitch;
   const xOf = (i: number) => i * spec.pitch - rowLength / 2;
 
-  // Machines face +Y: inputs on the -Y side, outputs on the +Y side (that is how the game models them).
   const machines: Placed[] = [];
   for (let i = 0; i < options.count; i++) {
-    const machine = b.place(spec.type, transform(vec(xOf(i), 0, 0)));
+    const machine = b.place(spec.type, transform(vec(xOf(i), 0, 0), machineYaw));
     if (options.recipe) b.setRecipe(machine, findRecipe(spec, options.recipe));
     const clock = options.clocks?.[i] ?? 1;
     if (Math.abs(clock - 1) > 1e-6) b.setClock(machine, clock);
     machines.push(machine);
   }
 
-  const supplyPoints = inputs.map((input, level) => buildInputLine(b, machines, input, level, stacked, belts.inputs[level], xOf, { beltType, liftType, splitterType }));
-
-  // Merger line: each merger collects from the machine behind it through its -Y side input.
-  const mergerY = output.offset.y + FEEDER_LENGTH + ATTACHMENT_RADIUS;
-  const mergerSideInput = connector(mergerType, "Input3");
-  const mergers = machines.map((machine, i) => {
-    const center = vec(xOf(i) + output.offset.x, mergerY, BELT_HEIGHT);
-    const merger = b.place(mergerType, transform(center));
-    b.belt(beltType(belts.output.feeders[i]),
-      { building: machine, name: output.name, position: b.worldPoint(machine, output.offset) },
-      { building: merger, name: mergerSideInput.name, position: add(center, mergerSideInput.offset) });
-    return { merger, center };
-  });
-  for (let i = 1; i < mergers.length; i++) {
-    const prev = mergers[i - 1];
-    const next = mergers[i];
-    b.belt(beltType(belts.output.chain[i - 1]),
-      { building: prev.merger, name: "Output1", position: attachmentPoint(mergerType, prev.center, "Output1") },
-      { building: next.merger, name: "Input1", position: attachmentPoint(mergerType, next.center, "Input1") });
-  }
+  const ctx: RowContext = {
+    b, machines, xOf,
+    inFace: inputLines[0].offset.y,
+    outFace: outputLines[0].offset.y,
+    inStacked: inputLines.length > 1,
+    outStacked: outputLines.length > 1,
+  };
+  const ports: Port[] = [
+    ...inputLines.map((l) => (l.port.kind === "belt" ? beltInputLine(ctx, l) : pipeInputLine(ctx, l))),
+    ...outputLines.map((l) => (l.port.kind === "belt" ? beltOutputLine(ctx, l) : pipeOutputLine(ctx, l))),
+  ];
 
   // Power: one pole in the gap between each pair of machines, powering both of them, chained to the
   // next pole (4 connections at most, which a Mk1 pole supports). An odd last machine gets its pole on the right.
@@ -201,76 +236,192 @@ export function generateMachineRow(options: MachineRowOptions): Blueprint {
     previousTop = { pole, position: top };
   }
 
-  // Ports: open belt ends on the designer boundary so Auto-Connect (R while placing) can link them to
-  // other blueprints, as hand-made blueprints do. Inputs come in at the -X edge, the output leaves at +X.
+  // Ports: open belt/pipe ends on the designer boundary so Auto-Connect (R while placing) can link
+  // them to other blueprints, as hand-made blueprints do. Inputs come in at -X, outputs leave at +X.
   const designerSize = b.requiredDesignerSize();
   const half = (designerSize * FOUNDATION) / 2;
-  supplyPoints.forEach((point, level) => {
-    b.belt(beltType(belts.inputs[level].end), { position: vec(-half, point.position.y, point.position.z) }, point);
-  });
-  const last = mergers[mergers.length - 1];
-  const exit = attachmentPoint(mergerType, last.center, "Output1");
-  b.belt(beltType(belts.output.end), { building: last.merger, name: "Output1", position: exit }, { position: vec(half, exit.y, exit.z) });
+  for (const port of ports) {
+    const edge = vec(port.side === "input" ? -half : half, port.point.position.y, port.point.position.z);
+    if (port.kind === "belt") {
+      if (port.side === "input") b.belt(beltType(port.tier), { position: edge }, port.point);
+      else b.belt(beltType(port.tier), port.point, { position: edge });
+    } else if (port.side === "input") {
+      b.pipe(pipeType(port.tier), { position: edge }, port.point, vec(1, 0, 0));
+    } else {
+      b.pipe(pipeType(port.tier), port.point, { position: edge }, vec(1, 0, 0));
+    }
+  }
 
   const recipeLabel = options.label ? ` ${options.label}` : options.recipe && !options.recipe.startsWith("/") ? ` ${options.recipe}` : "";
   const name = options.name ?? `${options.count}x ${capitalize(spec.key)}${recipeLabel}`;
-  const inputText = inputs
-    .map((_, level) => `${options.inputLabels?.[level] ?? `input ${level + 1}`} at ${level === 0 ? "ground level" : `+${(level * LEVEL_HEIGHT) / 100} m`} (belt Mk${belts.inputs[level].end})`)
-    .join(", ");
-  // Rotate so the flow runs along the blueprint's forward arrow: inputs at the back, product out the front.
+  const describe = (l: Line) => {
+    const height = l.level === 0 ? "ground level" : `+${(l.level * LEVEL_HEIGHT) / 100} m`;
+    return `${l.port.label} at ${height} (${l.port.kind} Mk${l.tiers.end})`;
+  };
+  // Rotate so the flow runs along the blueprint's forward arrow: inputs at the back, products out the front.
   return b.build(name, {
-    description: `${options.count} ${spec.key}(s)${recipeLabel}. Inputs enter at the back: ${inputText}. Product leaves at the front, in the direction of the placement arrow (belt Mk${belts.output.end}). Use Auto-Connect (R) to link it to neighboring blueprints.`,
+    description: `${options.count} ${spec.key}(s)${recipeLabel}. Inputs enter at the back: ${inputLines.map(describe).join(", ")}. `
+      + `Products leave at the front, in the direction of the placement arrow: ${outputLines.map(describe).join(", ")}. Use Auto-Connect (R) to link it to neighboring blueprints.`,
     designerSize,
     yaw: FLOW_TO_FRONT_YAW,
   });
 }
 
-interface LineTypes {
-  beltType: (tier: number) => string;
-  liftType: (tier: number) => string;
-  splitterType: string;
+interface RowContext {
+  b: BlueprintBuilder;
+  machines: Placed[];
+  xOf: (i: number) => number;
+  /** Y of the machines' input and output faces in the layout frame. */
+  inFace: number;
+  outFace: number;
+  inStacked: boolean;
+  outStacked: boolean;
 }
 
-/** Builds the splitter manifold for one machine input; level 0 is on the ground, higher levels drop through lifts. */
-function buildInputLine(
-  b: BlueprintBuilder,
-  machines: Placed[],
-  input: ConnectorStats,
-  level: number,
-  stacked: boolean,
-  belts: LineBelts,
-  xOf: (i: number) => number,
-  types: LineTypes,
-): ConnectorRef & { position: Vec3 } {
-  const { beltType, liftType, splitterType } = types;
-  const lineY = stacked ? input.offset.y - STACKED_MANIFOLD_SETBACK : input.offset.y - FEEDER_LENGTH - ATTACHMENT_RADIUS;
-  const lineZ = BELT_HEIGHT + level * LEVEL_HEIGHT;
+/** Where a line meets the outside world: the free end of its first (input) or last (output) attachment. */
+interface Port {
+  side: "input" | "output";
+  kind: LineKind;
+  tier: number;
+  point: ConnectorRef & { position: Vec3 };
+}
+
+const inputLineY = (ctx: RowContext) => ctx.inFace - (ctx.inStacked ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
+const outputLineY = (ctx: RowContext) => ctx.outFace + (ctx.outStacked ? STACKED_MANIFOLD_SETBACK : FEEDER_LENGTH + ATTACHMENT_RADIUS);
+
+/** Splitter manifold; level 0 is on the ground, higher levels drop into the machines through lifts. */
+function beltInputLine(ctx: RowContext, line: Line): Port {
+  const { b, machines, xOf } = ctx;
+  const { tiers, offset } = line;
+  const lineY = inputLineY(ctx);
+  const lineZ = BELT_HEIGHT + line.level * LEVEL_HEIGHT;
 
   const splitters = machines.map((machine, i) => {
-    const center = vec(xOf(i) + input.offset.x, lineY, lineZ);
-    const splitter = b.place(splitterType, transform(center));
-    const sideOutput = { building: splitter, name: "Output2", position: attachmentPoint(splitterType, center, "Output2") };
-    const machineInput = { building: machine, name: input.name, position: b.worldPoint(machine, input.offset) };
-    if (level === 0) {
-      b.belt(beltType(belts.feeders[i]), sideOutput, machineInput);
+    const center = vec(xOf(i) + offset.x, lineY, lineZ);
+    const splitter = b.place(SPLITTER, transform(center));
+    const sideOutput = { building: splitter, name: "Output2", position: attachmentPoint(SPLITTER, center, "Output2") };
+    const machineInput = { building: machine, name: line.connector.name, position: b.worldPoint(machine, line.connector.offset) };
+    if (line.level === 0) {
+      b.belt(beltType(tiers.feeders[i]), sideOutput, machineInput);
     } else {
       // Splitter -> lift top, lift drops the items to belt height, short belt into the machine.
       const top = vec(machineInput.position.x, machineInput.position.y - LIFT_SETBACK, lineZ);
-      const { lift, output } = b.liftDown(liftType(belts.feeders[i]), top, lineZ - BELT_HEIGHT, 90);
-      b.belt(beltType(belts.feeders[i]), sideOutput, { building: lift, name: "ConveyorAny0", position: top });
-      b.belt(beltType(belts.feeders[i]), { building: lift, name: "ConveyorAny1", position: output }, machineInput);
+      const { lift, output } = b.liftDown(liftType(tiers.feeders[i]), top, lineZ - BELT_HEIGHT, 90);
+      b.belt(beltType(tiers.feeders[i]), sideOutput, { building: lift, name: "ConveyorAny0", position: top });
+      b.belt(beltType(tiers.feeders[i]), { building: lift, name: "ConveyorAny1", position: output }, machineInput);
     }
     return { splitter, center };
   });
   for (let i = 1; i < splitters.length; i++) {
     const prev = splitters[i - 1];
     const next = splitters[i];
-    b.belt(beltType(belts.chain[i - 1]),
-      { building: prev.splitter, name: "Output1", position: attachmentPoint(splitterType, prev.center, "Output1") },
-      { building: next.splitter, name: "Input1", position: attachmentPoint(splitterType, next.center, "Input1") });
+    b.belt(beltType(tiers.chain[i - 1]),
+      { building: prev.splitter, name: "Output1", position: attachmentPoint(SPLITTER, prev.center, "Output1") },
+      { building: next.splitter, name: "Input1", position: attachmentPoint(SPLITTER, next.center, "Input1") });
   }
-  // Where the supply belt must arrive: the free input of the first splitter.
-  return { building: splitters[0].splitter, name: "Input1", position: attachmentPoint(splitterType, splitters[0].center, "Input1") };
+  const first = splitters[0];
+  return { side: "input", kind: "belt", tier: tiers.end, point: { building: first.splitter, name: "Input1", position: attachmentPoint(SPLITTER, first.center, "Input1") } };
+}
+
+/** Merger manifold on the ground collecting from the machines' output face. */
+function beltOutputLine(ctx: RowContext, line: Line): Port {
+  const { b, machines, xOf } = ctx;
+  const { tiers, offset } = line;
+  const lineY = outputLineY(ctx);
+  const sideInput = connector(MERGER, "Input3"); // faces -Y, toward the machines
+  const mergers = machines.map((machine, i) => {
+    const center = vec(xOf(i) + offset.x, lineY, BELT_HEIGHT);
+    const merger = b.place(MERGER, transform(center));
+    b.belt(beltType(tiers.feeders[i]),
+      { building: machine, name: line.connector.name, position: b.worldPoint(machine, line.connector.offset) },
+      { building: merger, name: sideInput.name, position: add(center, sideInput.offset) });
+    return { merger, center };
+  });
+  for (let i = 1; i < mergers.length; i++) {
+    const prev = mergers[i - 1];
+    const next = mergers[i];
+    b.belt(beltType(tiers.chain[i - 1]),
+      { building: prev.merger, name: "Output1", position: attachmentPoint(MERGER, prev.center, "Output1") },
+      { building: next.merger, name: "Input1", position: attachmentPoint(MERGER, next.center, "Input1") });
+  }
+  const last = mergers[mergers.length - 1];
+  return { side: "output", kind: "belt", tier: tiers.end, point: { building: last.merger, name: "Output1", position: attachmentPoint(MERGER, last.center, "Output1") } };
+}
+
+/** Junction Cross connectors: 0 at -X, 1 at +X, 2 at +Y, 3 at -Y (learned from real blueprints). */
+const junctionPoint = (center: Vec3, name: "Connection0" | "Connection1" | "Connection2" | "Connection3") => attachmentPoint(JUNCTION, center, name);
+
+/**
+ * Pipe manifold feeding the machines: Junction Crosses in series, each sending fluid toward its
+ * machine. Upper levels reach the machine through an S-curved pipe (fluid flows down freely). With
+ * 3 or more machines a loopback pipe joins the feed to the far end so flow does not drop there.
+ */
+function pipeInputLine(ctx: RowContext, line: Line): Port {
+  const { b, machines, xOf } = ctx;
+  const { tiers, offset } = line;
+  const lineY = inputLineY(ctx);
+  const lineZ = line.connector.offset.z + line.level * LEVEL_HEIGHT;
+  const along = vec(1, 0, 0);
+
+  const junctions = machines.map((machine, i) => {
+    const center = vec(xOf(i) + offset.x, lineY, lineZ);
+    const junction = b.place(JUNCTION, transform(center));
+    b.pipe(pipeType(tiers.feeders[i]),
+      { building: junction, name: "Connection2", position: junctionPoint(center, "Connection2") },
+      { building: machine, name: line.connector.name, position: b.worldPoint(machine, line.connector.offset) },
+      vec(0, 1, 0));
+    return { junction, center };
+  });
+  const chain = (from: { junction: Placed; center: Vec3 }, to: { junction: Placed; center: Vec3 }, tier: number) =>
+    b.pipe(pipeType(tier),
+      { building: from.junction, name: "Connection1", position: junctionPoint(from.center, "Connection1") },
+      { building: to.junction, name: "Connection0", position: junctionPoint(to.center, "Connection0") }, along);
+  for (let i = 1; i < junctions.length; i++) chain(junctions[i - 1], junctions[i], tiers.chain[i - 1]);
+
+  let entry = junctions[0];
+  if (machines.length >= LOOPBACK_MIN_MACHINES) {
+    // feed -> start junction -> manifold -> end junction, plus start -> corner -> corner -> end outside the row.
+    const place = (center: Vec3) => ({ junction: b.place(JUNCTION, transform(center)), center });
+    const start = place(vec(junctions[0].center.x - LOOPBACK_OFFSET, lineY, lineZ));
+    const end = place(vec(junctions[junctions.length - 1].center.x + LOOPBACK_OFFSET, lineY, lineZ));
+    const cornerA = place(vec(start.center.x, lineY - LOOPBACK_OFFSET, lineZ));
+    const cornerB = place(vec(end.center.x, lineY - LOOPBACK_OFFSET, lineZ));
+    chain(start, junctions[0], tiers.end);
+    chain(junctions[junctions.length - 1], end, tiers.feeders[tiers.feeders.length - 1]);
+    const link = (a: { junction: Placed; center: Vec3 }, aName: "Connection1" | "Connection2" | "Connection3", z: { junction: Placed; center: Vec3 }, zName: "Connection0" | "Connection2" | "Connection3", dir: Vec3) =>
+      b.pipe(pipeType(tiers.end), { building: a.junction, name: aName, position: junctionPoint(a.center, aName) }, { building: z.junction, name: zName, position: junctionPoint(z.center, zName) }, dir);
+    link(start, "Connection3", cornerA, "Connection2", vec(0, -1, 0));
+    link(cornerA, "Connection1", cornerB, "Connection0", along);
+    link(cornerB, "Connection2", end, "Connection3", vec(0, 1, 0));
+    entry = start;
+  }
+  return { side: "input", kind: "pipe", tier: tiers.end, point: { building: entry.junction, name: "Connection0", position: junctionPoint(entry.center, "Connection0") } };
+}
+
+/** Pipe manifold collecting from the machines; upper levels rise from the machine (machines push 10 m of head lift). */
+function pipeOutputLine(ctx: RowContext, line: Line): Port {
+  const { b, machines, xOf } = ctx;
+  const { tiers, offset } = line;
+  const lineY = outputLineY(ctx);
+  const lineZ = line.connector.offset.z + line.level * LEVEL_HEIGHT;
+  const junctions = machines.map((machine, i) => {
+    const center = vec(xOf(i) + offset.x, lineY, lineZ);
+    const junction = b.place(JUNCTION, transform(center));
+    b.pipe(pipeType(tiers.feeders[i]),
+      { building: machine, name: line.connector.name, position: b.worldPoint(machine, line.connector.offset) },
+      { building: junction, name: "Connection3", position: junctionPoint(center, "Connection3") },
+      vec(0, 1, 0));
+    return { junction, center };
+  });
+  for (let i = 1; i < junctions.length; i++) {
+    const prev = junctions[i - 1];
+    const next = junctions[i];
+    b.pipe(pipeType(tiers.chain[i - 1]),
+      { building: prev.junction, name: "Connection1", position: junctionPoint(prev.center, "Connection1") },
+      { building: next.junction, name: "Connection0", position: junctionPoint(next.center, "Connection0") }, vec(1, 0, 0));
+  }
+  const last = junctions[junctions.length - 1];
+  return { side: "output", kind: "pipe", tier: tiers.end, point: { building: last.junction, name: "Connection1", position: junctionPoint(last.center, "Connection1") } };
 }
 
 function attachmentPoint(type: string, center: Vec3, name: string): Vec3 {

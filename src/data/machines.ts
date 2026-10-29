@@ -32,6 +32,10 @@ export const MACHINES: Record<string, MachineSpec> = {
   assembler: { key: "assembler", type: "Build_AssemblerMk1_C", pitch: 1200, recipes: {} },
   foundry: { key: "foundry", type: "Build_FoundryMk1_C", pitch: 1200, recipes: {} },
   manufacturer: { key: "manufacturer", type: "Build_ManufacturerMk1_C", pitch: 2000, recipes: {} },
+  // Fluid machines (pipe connectors); see src/fluids.
+  refinery: { key: "refinery", type: "Build_OilRefinery_C", pitch: 1200, recipes: {} },
+  blender: { key: "blender", type: "Build_Blender_C", pitch: 2000, recipes: {} },
+  packager: { key: "packager", type: "Build_Packager_C", pitch: 1000, recipes: {} },
 };
 
 export function findMachine(key: string): MachineSpec {

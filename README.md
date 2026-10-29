@@ -69,7 +69,7 @@ npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --o
 | Option      | Meaning                                                                 |
 |-------------|-------------------------------------------------------------------------|
 | `--rate`    | target output per minute; sizes the row with the planner (needs `--recipe`, any recipe name) |
-| `--machine` | `constructor`, `smelter`, `assembler`, `foundry` or `manufacturer` (with `--count`) |
+| `--machine` | `constructor`, `smelter`, `assembler`, `foundry`, `manufacturer` or `refinery` (with `--count`) |
 | `--count`   | number of machines in the row, all at 100%                              |
 | `--recipe`  | recipe, e.g. `Iron Plate`, `Cast Screws`, `IngotIron` (or a full recipe path) |
 | `--belt`    | conveyor tier 1-6 (default: the slowest tier that carries the flow with `--rate`, otherwise 1) |
@@ -80,6 +80,16 @@ npm run sbp -- generate row --machine smelter --count 6 --recipe IngotCopper --o
 | `--force`   | overwrite an existing blueprint with the same name                      |
 
 Layout: machines face the same direction, a line of splitters feeds each input and a line of mergers collects the output. Connect your supply belts to the left end of the splitter lines and take the products from the right end of the merger line. Machines with several inputs (Assembler, Foundry, Manufacturer) get one manifold per input, stacked 4 m apart; the upper ones drop into the machines through Conveyor Lifts. With `--rate`, every belt segment gets the slowest tier that carries its flow: the input lines get slower toward their far end and the output line faster toward its exit. The command prints which belt tier each supply line needs. Power poles sit between the machines; connect any of them to your grid. After placing the blueprint in-game, you can open it in the Blueprint Designer and re-save it so the game recalculates its cost.
+
+### Fluids
+
+Recipes with fluids (for example `Plastic`, `Rubber`, `Fuel`) get pipe manifolds made of Junction Crosses, with a loopback pipe when there are 3 or more machines. To inspect the pipe networks of any blueprint, generated or hand-made:
+
+```bash
+npm run sbp -- fluids check "My Session/My Blueprint"
+```
+
+It lists each network's fluid, consumers and producers with their m³/min, elevations and open ports. It reports mixed fluids, pipes that are too slow, head lift that is too low (liquids only; gases ignore it), and manifolds without a loopback. The rules come from the wiki and are in `src/fluids/rules.ts`; `docs/DESIGN.md` explains them.
 
 ### How generation works
 

@@ -1,5 +1,5 @@
 import { Blueprint, SaveComponent, SaveEntity } from "@etothepii/satisfactory-file-parser";
-import { Transform, Vec3, length, multiply, rotate, scale, snap, sub, toWorld, transform, vec, yaw } from "./geometry.js";
+import { Transform, Vec3, add, length, multiply, rotate, scale, snap, sub, toWorld, transform, vec, yaw } from "./geometry.js";
 import { SELF, TemplateLibrary, cloneDeep } from "./templates.js";
 import { costOf } from "./data/costs.js";
 
@@ -137,6 +137,30 @@ export class BlueprintBuilder {
       },
     });
     return { lift, input: top, output: vec(top.x, top.y, top.z - height) };
+  }
+
+  /**
+   * Places a pipeline between two points. Pipes leave and enter horizontally (`direction` at both
+   * ends), so a height difference becomes a smooth S-curve. Like the game, the spline gets a point
+   * about every meter. Either end may be left open (a port for Auto-Connect).
+   */
+  pipe(type: string, from: BeltEnd, to: BeltEnd, direction: Vec3): Placed {
+    const pipe = this.instantiate(type, transform(from.position));
+    const delta = sub(to.position, from.position);
+    const horizontal = Math.hypot(delta.x, delta.y);
+    const t0 = scale(direction, Math.max(horizontal, 100));
+    const segments = Math.max(1, Math.ceil(length(delta) / 100));
+    // Cubic Hermite from the origin to `delta`, with tangent t0 at both ends (the start point is 0).
+    const combine = (a: number, b: number) => add(scale(t0, a), scale(delta, b));
+    const at = (s: number) => combine(s ** 3 - 2 * s ** 2 + s + (s ** 3 - s ** 2), -2 * s ** 3 + 3 * s ** 2);
+    const slope = (s: number) => combine(3 * s ** 2 - 4 * s + 1 + (3 * s ** 2 - 2 * s), -6 * s ** 2 + 6 * s);
+    (pipe.entity.properties as any).mSplineData.values = Array.from({ length: segments + 1 }, (_, i) => {
+      const s = i / segments;
+      return this.splinePoint(pipe, at(s), scale(slope(s), 1 / segments));
+    });
+    if (from.building) this.link({ building: pipe, name: "PipelineConnection0" }, from);
+    if (to.building) this.link({ building: pipe, name: "PipelineConnection1" }, to);
+    return pipe;
   }
 
   /** Connects two belt connectors to each other (both sides store the link). */

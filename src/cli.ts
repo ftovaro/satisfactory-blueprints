@@ -10,10 +10,11 @@ import { CONNECTOR_FILE } from "./connectors.js";
 import { TEMPLATE_FILE, extractTemplates, saveTemplates } from "./templates.js";
 import { generateMachineRow } from "./generators/machine-row.js";
 import { GENERATED_MARKER } from "./builder.js";
-import { GAME_DATA_FILE, findItem, findRecipe as findGameRecipe, loadGameData, pickTier, recipesFor } from "./gamedata/index.js";
+import { checkNetworks, findNetworks, formatNetworks } from "./fluids/network.js";
+import { GAME_DATA_FILE, GameData, findItem, findRecipe as findGameRecipe, loadGameData, pickTier, recipesFor } from "./gamedata/index.js";
 import { findDocsFile, importGameData } from "./gamedata/import.js";
 import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
-import { MachineRowOptions, planBelts } from "./generators/machine-row.js";
+import { MachineRowOptions, PortSpec, planLine } from "./generators/machine-row.js";
 import { MACHINES } from "./data/machines.js";
 import { formatPlan } from "./planner/format.js";
 
@@ -207,7 +208,17 @@ function cmdGenerate(root: string, args: Args): void {
   }
   const written = writeBlueprint(blueprint, outDir, fileName);
   // Read it back to make sure the file we produced is valid.
-  console.log(formatSummary(summarize(readBlueprint(written.sbp))));
+  const reread = readBlueprint(written.sbp);
+  console.log(formatSummary(summarize(reread)));
+  // Every generated blueprint with pipes gets the fluid check; problems are printed in full.
+  const networks = findNetworks(reread, tryLoadGameData());
+  if (networks.length > 0) {
+    const findings = checkNetworks(networks, tryLoadGameData());
+    const problems = findings.filter((f) => f.severity !== "info");
+    console.log(problems.length === 0
+      ? `\nFluids: ${networks.length} pipe network(s), no problems found ("sbp fluids check" for details).`
+      : `\n${formatNetworks(networks, findings, tryLoadGameData())}`);
+  }
   console.log(`\nWrote ${written.sbp}`);
   if ((blueprint.header.designerDimension?.x ?? 0) > 6) {
     console.log("Warning: this layout is larger than the biggest Blueprint Designer (6 x 6 foundations).");
@@ -229,35 +240,58 @@ function rowFromRate(recipeQuery: string | undefined, rate: number, belt: number
   const spec = Object.values(MACHINES).find((m) => m.type === recipe.machine);
   if (!spec) throw new Error(`"${recipe.name}" runs in a ${data.machines[recipe.machine].name}; rows support: ${Object.keys(MACHINES).join(", ")}.`);
 
-  const fluids = [...recipe.inputs, ...recipe.outputs].filter((f) => data.items[f.item].form !== "solid");
-  if (fluids.length > 0) throw new Error(`"${recipe.name}" uses fluids (${fluids.map((f) => data.items[f.item].name).join(", ")}); fluid rows are not supported yet.`);
-  if (recipe.outputs.length !== 1) throw new Error(`"${recipe.name}" has ${recipe.outputs.length} outputs; rows support one output.`);
-
+  // The rate applies to the first product; other products (byproducts) follow from the recipe.
   const product = recipe.outputs[0].item;
   const clocks = machineClocks(rate, perMinute(recipe, product, "outputs"));
+  const port = (side: "inputs" | "outputs") => (f: { item: string }): PortSpec => ({
+    label: data.items[f.item].name,
+    kind: data.items[f.item].form === "solid" ? "belt" : "pipe",
+    perMachine: clocks.map((c) => perMinute(recipe, f.item, side) * c),
+  });
   const options: RowOptions = {
     machine: spec.key,
     count: clocks.length,
     clocks,
     recipe: recipe.path,
     label: `${fmt(rate)} ${data.items[product].name}`,
-    inputCount: recipe.inputs.length,
-    inputLabels: recipe.inputs.map((f) => data.items[f.item].name),
+    inputs: recipe.inputs.map(port("inputs")),
+    outputs: recipe.outputs.map(port("outputs")),
     belt,
-    inputPerMachine: recipe.inputs.map((f) => clocks.map((c) => perMinute(recipe, f.item, "inputs") * c)),
-    outputPerMachine: clocks.map((c) => perMinute(recipe, product, "outputs") * c),
-    beltSpeeds: data.belts.map((t) => t.perMinute),
+    speeds: { belt: data.belts.map((t) => t.perMinute), pipe: data.pipes.map((t) => t.perMinute) },
   };
 
-  const belts = planBelts(clocks.length, recipe.inputs.length, options);
   const tiers = (list: number[]) => list.map((t) => `Mk${t}`).join(" ") || "-";
   console.log(`${spec.key}: ${clocks.length} machine(s), clocks ${clocks.map((c) => `${fmt(c * 100)}%`).join(", ")}`);
-  belts.inputs.forEach((line, i) => {
-    const level = i === 0 ? "ground" : `level ${i}, via lifts`;
-    console.log(`  ${options.inputLabels![i]} (${level}): supply Mk${line.end} -> line ${tiers(line.chain)}, feeders ${tiers(line.feeders)}`);
-  });
-  console.log(`  ${data.items[product].name}: feeders ${tiers(belts.output.feeders)} -> line ${tiers(belts.output.chain)} -> exit Mk${belts.output.end}\n`);
+  for (const [side, ports] of [["input", options.inputs!], ["output", options.outputs!]] as const) {
+    for (const p of ports) {
+      const line = planLine(clocks.length, side, p, options);
+      const total = fmt(p.perMachine!.reduce((a, b) => a + b, 0));
+      console.log(`  ${side.padEnd(6)} ${p.label} (${total}/min, ${p.kind}): ${side === "input" ? `supply Mk${line.end} -> line ${tiers(line.chain)}` : `line ${tiers(line.chain)} -> exit Mk${line.end}`}, feeders ${tiers(line.feeders)}`);
+    }
+  }
+  console.log();
   return options;
+}
+
+function tryLoadGameData(): GameData | undefined {
+  try {
+    return loadGameData();
+  } catch {
+    return undefined;
+  }
+}
+
+/** "fluids check <blueprint>": every pipe network with its endpoints, flows, elevations and rule violations. */
+function cmdFluids(root: string, args: Args): void {
+  const [sub, ...rest] = args.positional;
+  if (sub !== "check" || rest.length === 0) throw new Error('Usage: sbp fluids check <file|session/name>');
+  const blueprint = readBlueprint(resolveBlueprintPath(rest.join(" "), root));
+  const data = tryLoadGameData();
+  if (!data) console.log('(No game data: flows and fluid names are unknown. Run "sbp import-game-data" for a full check.)\n');
+  const networks = findNetworks(blueprint, data);
+  const findings = checkNetworks(networks, data);
+  console.log(formatNetworks(networks, findings, data));
+  if (findings.some((f) => f.severity === "error")) process.exitCode = 1;
 }
 
 function cmdImportGameData(args: Args): void {
@@ -337,6 +371,8 @@ function main(): void {
       return cmdRecipes(args);
     case "plan":
       return cmdPlan(args);
+    case "fluids":
+      return cmdFluids(root, args);
     default:
       console.log(USAGE);
   }

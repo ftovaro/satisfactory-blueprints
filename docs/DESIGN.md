@@ -123,9 +123,32 @@ For each pipe network:
 2. For liquids: the highest point of every consumer minus the source base must be ≤ the available head lift; otherwise insert pumps with ≥ 2 m margin.
 3. Manifolds get a loopback pipe.
 
-### Debugging
+### Layout (implemented in `generators/machine-row.ts`)
 
-`sbp fluids check <blueprint>` (planned) prints every pipe network as a graph: fluid, sources, consumers, flow per segment versus capacity, the highest point versus available head lift, and the margin. Problems are listed with the exact pipe or junction involved, so a fluid issue can be traced without loading the game.
+- Fluid inputs take the lowest manifold levels, so whatever feeds them needs the least head lift. Fluid outputs take the upper levels, because machines push fluids up to 10 m.
+- An input pipe manifold is a line of Junction Crosses. Each junction feeds its machine through a short pipe; upper levels use an S-curved pipe that drops into the machine.
+- With 3 or more machines, a loopback runs from a start junction, around the outside of the manifold, to an end junction.
+- Ports are open pipe ends on the designer boundary, just like belts.
+- Machines whose inputs are on their +Y face (the Refinery) are turned 180° so every row has the same shape.
+
+### Debugging (`src/fluids/`)
+
+`sbp fluids check <blueprint>` works on any blueprint, hand-made ones included. `generate` runs it automatically on every blueprint that has pipes.
+
+- **Networks:** it splits the pipes into networks. Pipes, junctions, valves and buffers join a network; machines, extractors, generators and pumps are its endpoints.
+- **Per network it prints:**
+  - the fluid;
+  - every consumer and producer with its m³/min, taken from its recipe and clock;
+  - the elevation range;
+  - the slowest pipe;
+  - whether the pipes form a loop;
+  - the open pipe ends (ports).
+- **Rules it checks:**
+  - one fluid per network;
+  - demand and supply against the slowest pipe;
+  - head lift for liquids: the highest pipe surface against each source's recommended head lift, with a 2 m margin, measured from the source's base;
+  - a loopback on manifolds with 3 or more junctions.
+- **Where the rules live:** every constant comes from the wiki and is in `src/fluids/rules.ts`, so an in-game surprise can be traced to one number.
 
 ## 6. Validation before writing
 
