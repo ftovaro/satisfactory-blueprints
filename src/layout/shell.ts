@@ -2,8 +2,8 @@ import { BlueprintBuilder, Placed } from "../builder.js";
 import { Vec3, transform, vec } from "../geometry.js";
 
 /**
- * The building around a factory: a ground floor of foundations, walls standing on it, windows, a
- * door, a flat roof, holes where belts and pipes cross the walls, and a wall-mounted power inlet.
+ * The building around a factory: walls standing on the ground it is placed on, windows, a door, a
+ * flat roof, holes where belts and pipes cross the walls, and a wall-mounted power inlet.
  *
  * Geometry learned from real blueprints:
  * - an 8 m x 4 m wall has its origin at the bottom center; it spans its local Y (8 m) and Z (4 m),
@@ -28,7 +28,7 @@ export interface Opening {
 
 export interface ShellOptions {
   envelope: { minX: number; maxX: number; minY: number; maxY: number };
-  /** Top of the ground floor, where the walls stand. */
+  /** Height of the ground the walls stand on. */
   floorZ: number;
   /** Height of the roof's underside (whole 4 m walls above the floor). */
   roofZ: number;
@@ -90,14 +90,12 @@ export function buildShell(b: BlueprintBuilder, options: ShellOptions): Shell {
     }
   }
 
-  // Ground floor and flat roof of 1 m foundations, inside and on top of the walls.
+  // Flat roof of 1 m foundations resting on the walls.
   if (roof) {
-    for (const z of [floorZ - 50, roofZ + 50]) {
-      for (let x = e.minX; x < e.maxX; x += FOUNDATION) {
-        for (let y = e.minY; y < e.maxY; y += FOUNDATION) {
-          b.place(roof, transform(vec(x + FOUNDATION / 2, y + FOUNDATION / 2, z)));
-          pieces++;
-        }
+    for (let x = e.minX; x < e.maxX; x += FOUNDATION) {
+      for (let y = e.minY; y < e.maxY; y += FOUNDATION) {
+        b.place(roof, transform(vec(x + FOUNDATION / 2, y + FOUNDATION / 2, roofZ + 50)));
+        pieces++;
       }
     }
   }

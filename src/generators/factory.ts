@@ -203,16 +203,17 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     for (const r of tallRows) r.y -= shift;
   }
   // Floor heights follow the short rows only; a floor of tall rows only adds no height.
+  // The ground floor is wherever the blueprint is placed (no foundations of its own); upper floors are slabs.
   const floorZ: number[] = [];
-  let z = SLAB;
+  let z = 0;
   for (const floor of floors) {
     floorZ.push(z);
     const short = floor.filter((r) => !tall(r));
     if (short.length > 0) z += Math.ceil((Math.max(...short.map((r) => r.row.height)) + SLAB + HEADROOM) / WALL) * WALL;
   }
   const top = Math.max(z, ...rows.filter(tall).map((r) => floorZ[r.floor] + r.row.height + SLAB + HEADROOM));
-  // The roof rests on the walls right above the last floor (walls stand on the ground slab).
-  const roofZ = SLAB + Math.ceil((top - SLAB) / WALL) * WALL;
+  // The roof rests on the walls right above the last floor (floors are whole walls tall).
+  const roofZ = Math.ceil(top / WALL) * WALL;
 
   // Flows: every item a row consumes, plus everything that leaves the factory.
   const flows: Flow[] = [];
@@ -271,8 +272,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   });
   floors.forEach((floor, f) => {
     // One strip of foundations per row, so the gaps between rows stay open for vertical lines.
-    // The ground floor is the building's (see buildShell).
-    if (floorZ[f] <= SLAB) return;
+    if (floorZ[f] <= 0) return;
     for (const e of slabs[f].rows) {
       for (let x = slabs[f].minX; x < e.maxX; x += FOUNDATION) {
         for (let y = Math.floor(e.minY / FOUNDATION) * FOUNDATION; y < e.maxY; y += FOUNDATION) {
@@ -564,7 +564,7 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
     minX: origin.x - CELL / 2, maxX: origin.x + (size.nx - 0.5) * CELL,
     minY: origin.y - CELL / 2, maxY: origin.y + (size.ny - 0.5) * CELL,
   };
-  const shell = buildShell(b, { envelope, floorZ: SLAB, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })) });
+  const shell = buildShell(b, { envelope, floorZ: 0, roofZ, openings: ports.map((p) => ({ at: p.at, kind: p.flow.kind })) });
   if (shell.inlet) {
     const first = rows[0].poleTops![0];
     b.wire({ building: shell.inlet.pole, name: b.powerConnector(shell.inlet.pole), position: shell.inlet.position }, { building: first.pole, name: b.powerConnector(first.pole), position: first.position });
