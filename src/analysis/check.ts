@@ -112,7 +112,17 @@ export function checkBlueprint(blueprint: Blueprint): CheckResult {
     const set = new Set<string>([e.instanceName]);
     for (const ref of e.components ?? []) {
       const t = linkOf(ref.pathName);
-      if (t) set.add(t.slice(0, t.lastIndexOf(".")));
+      if (!t) continue;
+      const neighbor = t.slice(0, t.lastIndexOf("."));
+      set.add(neighbor);
+      // Pieces joined through a pump, splitter or junction touch each other on purpose.
+      const between = byName.get(neighbor);
+      if (between && !isBelt(between) && !isLift(between) && !isPipe(between)) {
+        for (const r of between.components ?? []) {
+          const o = linkOf(r.pathName);
+          if (o) set.add(o.slice(0, o.lastIndexOf(".")));
+        }
+      }
     }
     related.set(e.instanceName, set);
     if (isPipe(e)) {
