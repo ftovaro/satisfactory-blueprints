@@ -1,4 +1,4 @@
-﻿# satisfactory-blueprints
+# satisfactory-blueprints
 
 A command-line toolkit for working with [Satisfactory](https://www.satisfactorygame.com/) blueprint files (`.sbp` / `.sbpcfg`).
 
