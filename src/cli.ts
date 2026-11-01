@@ -18,6 +18,7 @@ import { fmt, machineClocks, perMinute, plan } from "./planner/plan.js";
 import { MachineRowOptions, PortSpec, planLine } from "./generators/machine-row.js";
 import { generateFactory, generatePowerPlant } from "./generators/factory.js";
 import { learnPaints, savePaints } from "./layout/styles.js";
+import { OrganizePlan, organizeBlueprints, organizeSave, validatePlan } from "./organize.js";
 import { rowOptionsFor } from "./generators/row-options.js";
 import { Blueprint as BlueprintType } from "@etothepii/satisfactory-file-parser";
 import { formatPlan } from "./planner/format.js";
@@ -34,6 +35,9 @@ Commands:
   check <file|session/name>   Check links, belt and lift geometry, clashes, power and pipe networks
   connectors                  Print the belt/pipe connector positions learned from all blueprints
   learn                       Rebuild data/templates.json and data/connectors.json from your blueprints
+  organize <plan.json> --session <name> --save <file.sav> [--out <file.sav>]
+                              Rename and restyle a session's blueprints (name, icon, color,
+                              description) and write a copy of the save with blueprint categories
   import-game-data [--game-dir <path>]
                               Read recipes, items and machines from your Satisfactory install
   recipes <item>              List the recipes that produce an item
@@ -205,6 +209,28 @@ function cmdLearn(root: string): void {
   const paints = learnPaints(blueprints);
   savePaints(paints);
   console.log(`Paint for ${Object.entries(paints).map(([kit, p]) => `${kit} (${Object.keys(p).length} pieces)`).join(", ")}`);
+}
+
+/**
+ * Applies an organize plan (see src/organize.ts) to a session: renames and restyles its blueprints
+ * (after copying the folder to a backup) and writes a copy of a save with the blueprint categories.
+ */
+function cmdOrganize(root: string, args: Args): void {
+  const planFile = args.positional[0];
+  const session = typeof args.flags.session === "string" ? args.flags.session : undefined;
+  const saveIn = typeof args.flags.save === "string" ? args.flags.save : undefined;
+  if (!planFile || !session || !saveIn) throw new Error("Usage: sbp organize <plan.json> --session <name> --save <file.sav> [--out <new file.sav>]");
+  const plan = JSON.parse(fs.readFileSync(planFile, "utf8")) as OrganizePlan;
+  const dir = path.join(root, session);
+  const problems = validatePlan(plan, dir);
+  if (problems.length) throw new Error(`Plan problems:\n  ${problems.join("\n  ")}`);
+  const saveOut = typeof args.flags.out === "string" ? args.flags.out : saveIn.replace(/\.sav$/i, "_organized.sav");
+  const { proxies } = organizeSave(plan, saveIn, saveOut);
+  console.log(`Save with ${plan.categories.length} categories and ${proxies} renamed blueprint proxies -> ${saveOut}`);
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const backup = path.join(path.dirname(saveIn), `blueprints backup ${session} ${stamp}`);
+  organizeBlueprints(plan, dir, backup);
+  console.log(`${plan.entries.length} blueprints renamed and restyled in ${dir} (backup: ${backup})`);
 }
 
 function cmdGenerate(root: string, args: Args): void {
@@ -408,6 +434,8 @@ function main(): void {
       return cmdLearn(root);
     case "generate":
       return cmdGenerate(root, args);
+    case "organize":
+      return cmdOrganize(root, args);
     case "import-game-data":
       return cmdImportGameData(args);
     case "recipes":

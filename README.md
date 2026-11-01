@@ -139,6 +139,27 @@ Each subfolder is a save session. A blueprint is only visible in-game for the se
 
 To use a different folder (Linux/Proton, dedicated servers, a test copy), pass `--dir <path>` or set the `SATISFACTORY_BLUEPRINT_DIR` environment variable.
 
+
+## Organizing a session's blueprints
+
+`sbp organize <plan.json> --session <name> --save <file.sav>` renames and restyles a session's
+blueprints and sorts them into Blueprint menu categories:
+
+- each blueprint gets a new name, icon, color and description (only its `.sbpcfg` is rewritten; the
+  `.sbp` content is untouched), after the session's blueprint folder is copied to a backup;
+- categories live in the save, so a **copy** of the save is written (`<save>_organized.sav`) with the
+  categories and subcategories, and with the new names in blueprints already placed in the world.
+  The original save is never modified. Close the game first, then load the new save.
+
+A plan lists the categories and, for each blueprint, its old name, new name, category, subcategory,
+icon ID, color and description (see `OrganizePlan` in `src/organize.ts`).
+`src/analysis/contents.ts` reads what a blueprint takes in, makes, leaves over and uses or produces
+in power, from its machines, recipes, clock speeds and generators, to write those descriptions.
+
+Icon IDs (items, buildings and generic icons such as "Power" or "Factory") come from
+[SyBozzDEV/Satisfactory-Icons](https://github.com/SyBozzDEV/Satisfactory-Icons) (MIT License), in
+`data/icon-ids.json`.
+
 ## Example output
 
 ```

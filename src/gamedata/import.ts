@@ -93,7 +93,10 @@ export function importGameData(docsFile: string): GameData {
       name: c.mDisplayName,
       power: Number(c.mPowerProduction),
       fuels: fuels.map((f) => f.mFuelClass).filter((cls) => items[cls]),
-      ...(fuels[0]?.mSupplementalResourceClass ? { supplemental: fuels[0].mSupplementalResourceClass } : {}),
+      // mSupplementalToPowerRatio is liters per MJ: liters/s per MW, so x 60 / 1000 gives m³/min per MW.
+      ...(fuels[0]?.mSupplementalResourceClass
+        ? { supplemental: fuels[0].mSupplementalResourceClass, supplementalPerMW: (Number(c.mSupplementalToPowerRatio) * 60) / 1000 }
+        : {}),
     };
   }
 

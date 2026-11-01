@@ -53,6 +53,8 @@ export interface Generator {
   fuels: string[];
   /** Item class it also needs (e.g. water for coal generators), if any. */
   supplemental?: string;
+  /** m³ (or items) per minute of the supplemental resource per MW produced. */
+  supplementalPerMW?: number;
 }
 
 export interface Transport {
