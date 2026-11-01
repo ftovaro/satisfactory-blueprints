@@ -34,6 +34,15 @@ export interface OrganizePlan {
 
 const ICON_LIBRARY = "/Game/FactoryGame/-Shared/Blueprint/IconLibrary";
 
+/**
+ * Sets a BoolProperty. Newer saves store the value in the property tag's flags (0x10 = true), which
+ * the parser keeps on write but does not read into `value`; both must change together.
+ */
+function setBool(property: { value: boolean; flags?: number }, value: boolean): void {
+  property.value = value;
+  if (typeof property.flags === "number") property.flags = value ? property.flags | 0x10 : property.flags & ~0x10;
+}
+
 const toArrayBuffer = (bytes: Buffer) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 const safeFileName = (name: string) => name.replace(/[<>:"/\\|?*]/g, "_");
 
@@ -112,7 +121,7 @@ export function organizeSave(plan: OrganizePlan, saveIn: string, saveOut: string
     record.properties.CategoryName.value = c.name;
     record.properties.IconID.value = c.icon;
     record.properties.MenuPriority.value = i + 1;
-    record.properties.IsUndefined.value = false;
+    setBool(record.properties.IsUndefined, false);
     record.properties.SubCategoryRecords.values = c.subcategories.map((s, j) => {
       const sub = cloneDeep(subModel);
       sub.properties.SubCategoryName.value = s;
