@@ -140,6 +140,8 @@ Each subfolder is a save session. A blueprint is only visible in-game for the se
 To use a different folder (Linux/Proton, dedicated servers, a test copy), pass `--dir <path>` or set the `SATISFACTORY_BLUEPRINT_DIR` environment variable.
 
 
+- **Name, icon, color and description:** generated blueprints are named `[Type] Name - Product` (e.g. `[Steel] Steel Beam Factory - 15 Steel Beam`, `[Power] Fuel Power Plant - 1000 MW net`), take the icon of the machine that makes the final product (or of the generators), the color of their subcategory (power yellow, iron and steel gray, parts orange, electronics blue, oil purple, minerals teal), and a description listing their rates per minute: inputs, outputs, byproducts and power (`src/naming.ts`).
+
 ## Organizing a session's blueprints
 
 `sbp organize <plan.json> --session <name> --save <file.sav>` renames and restyles a session's

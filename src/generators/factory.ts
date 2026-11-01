@@ -11,6 +11,7 @@ import { BuiltRow, LineKind, PreparedRow, beltType, buildRow, liftType, pipeType
 import { rowOptionsFor } from "./row-options.js";
 import { iconFor } from "../data/icons.js";
 import { buildShell } from "../layout/shell.js";
+import { SUBCATEGORY_COLORS, amount, describe, familyOf } from "../naming.js";
 import { KITS, StyleKit } from "../layout/styles.js";
 import { TemplateLibrary, loadTemplates } from "../templates.js";
 
@@ -46,7 +47,7 @@ export interface FactoryOptions extends PlanOptions {
   /** Building style (src/layout/styles.ts); by default one is picked from the product. */
   style?: string;
   /** Burn the target in generators instead of exporting it (a power plant). */
-  power?: { generator: Generator; fuel: Item; megawatts: number; fuelPerGenerator: number };
+  power?: { generator: Generator; fuel: Item; megawatts: number; fuelPerGenerator: number; netMW?: number };
 }
 
 export interface PowerPlantOptions extends PlanOptions {
@@ -179,8 +180,7 @@ export function generatePowerPlant(data: GameData, options: PowerPlantOptions): 
     }
     const result = generateFactory(data, {
       ...options, target: fuel.className, rate: fuelFor(gross),
-      name: options.name ?? `${fuel.name} Power Plant ${fmt(options.megawatts)} MW${options.net ? " net" : ""}`,
-      power: { generator, fuel, megawatts: gross, fuelPerGenerator },
+      power: { generator, fuel, megawatts: gross, fuelPerGenerator, netMW: options.net ? options.megawatts : undefined },
     });
     const used = result.blueprint.objects.filter((o) => /Build_PipelinePump_C$/.test(o.typePath) && "transform" in o).length;
     if (!options.net || used <= pumps || pass >= 2) return result;
@@ -739,16 +739,33 @@ function layoutFactory(data: GameData, options: FactoryOptions, margins: Margins
   const rawText = rawFlows.map((f) => `${fmt(f.perMinute)}${unit(f)} ${f.label} (${carrier(f)})`).join(", ");
   const outText = exported.map((f) => `${fmt(f.perMinute)}${unit(f)} ${f.label} (${carrier(f)})`).join(", ");
   const half = Math.ceil(Math.max(-envelope.minX, envelope.maxX, -envelope.minY, envelope.maxY) / FOUNDATION) * FOUNDATION;
-  const blueprint = b.build(options.name ?? (power ? `Power Plant ${fmt(power.megawatts)} MW` : `Factory ${fmt(options.rate)} ${productName}`), {
-    description: (power
-      ? `Power plant: ${rows[rows.length - 1].row.options.count}x ${power.generator.name} burning ${fmt(options.rate)} m³/min ${power.fuel.name} = ${fmt(power.megawatts)} MW.${netText} `
-      : `Complete factory: ${fmt(options.rate)}/min ${productName} in ${floors.length} floor(s). `)
-      + `Inputs at ground level on the back edge, one each: ${rawText}. Outputs at ground level on the front edge: ${outText}. Power: connect any pole.`,
+  // Name "[Type] Name - Product", the color of its subcategory, the icon of the machine making the
+  // final product (or the generators) and a description of its rates (src/naming.ts).
+  const pumps = b.count("Build_PipelinePump_C");
+  const target = production.target.item;
+  const family = power ? { subcategory: /Coal/.test(power.generator.name) ? "Coal" : "Fuel", prefix: "Power" } : familyOf(target);
+  const finalMachine = power ? power.generator.name : data.machines[rowOfStep.get(production.steps.find((s) => s.product.className === target.className)!)!.step.recipe.machine]?.name;
+  const usesMW = production.steps.reduce((s, st) => s + st.power, 0) + pumps * PUMP_MW;
+  const outputs = exported.filter((f) => f.item === target.className).map((f) => amount(data, f.item, f.perMinute));
+  const description = describe({
+    inputs: rawFlows.map((f) => amount(data, f.item, f.perMinute)),
+    outputs,
+    byproducts: exported.filter((f) => f.item !== target.className).map((f) => amount(data, f.item, f.perMinute)),
+    makesMW: power?.megawatts,
+    usesMW,
+    notes: [`Inputs enter on the back wall, outputs leave on the front wall (${[...rawFlows, ...exported].map(carrier).join(", ")}). Power: the wall pole outside the back wall.`],
+  });
+  const name = options.name ?? (power
+    ? `[Power] ${power.fuel.name} Power Plant - ${power.netMW !== undefined ? `${fmt(power.netMW)} MW net` : `${fmt(power.megawatts)} MW`}`
+    : `[${family.prefix}] ${target.name} Factory - ${fmt(options.rate)} ${target.name}`);
+  const blueprint = b.build(name, {
+    description,
     designerSize: (half * 2) / FOUNDATION,
     yaw: FLOW_TO_FRONT_YAW,
+    color: SUBCATEGORY_COLORS[family.subcategory],
+    icon: finalMachine ? iconFor(finalMachine) : undefined,
   });
 
-  const pumps = blueprint.objects.filter((o) => /Build_PipelinePump_C$/.test(o.typePath) && "transform" in o).length;
   const report = [
     `${productName}${power ? ` (${fmt(options.rate)} m³/min ${power.fuel.name}.${netText})` : `: ${fmt(options.rate)}/min`} in ${floors.length} floor(s), ${rows.reduce((n, r) => n + r.row.options.count, 0)} machines${pumps ? `, ${pumps} pump(s)` : ""}, building ${fmt((envelope.maxX - envelope.minX) / 100)} x ${fmt((envelope.maxY - envelope.minY) / 100)} x ${fmt(roofZ / 100)} m`,
     ...floors.map((floor, f) => `  floor ${f} (${fmt(floorZ[f] / 100)} m): ` + floor.map((r) => {

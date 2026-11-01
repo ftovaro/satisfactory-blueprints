@@ -133,6 +133,11 @@ export class BlueprintBuilder {
     return sign;
   }
 
+  /** How many buildings of a type (class name) have been placed. */
+  count(type: string): number {
+    return this.objects.filter((o) => o.typePath.endsWith(`.${type}`) && "transform" in o).length;
+  }
+
   /** First of the given building types (class names) that this blueprint's template version has. */
   pick(...types: string[]): string | undefined {
     return types.find((t) => Object.keys(this.library.types).some((k) => k.endsWith(`.${t}`)));
@@ -324,7 +329,7 @@ export class BlueprintBuilder {
    *   things out in whatever frame is convenient and rotate at the end so the blueprint's front
    *   (the white arrow shown while placing it, which points to -Y) faces the right way.
    */
-  build(name: string, options: { description?: string; designerSize?: number; yaw?: number } = {}): Blueprint {
+  build(name: string, options: { description?: string; designerSize?: number; yaw?: number; color?: { r: number; g: number; b: number }; icon?: number } = {}): Blueprint {
     if (options.yaw) this.rotateLayout(options.yaw);
     const header = cloneDeep(this.library.header);
     const size = options.designerSize ?? this.requiredDesignerSize();
@@ -338,11 +343,12 @@ export class BlueprintBuilder {
       header,
       config: {
         configVersion: 3,
-        description: [options.description, GENERATED_MARKER].filter(Boolean).join(" "),
-        color: { r: 0.9, g: 0.45, b: 0.1, a: 1 },
-        iconID: -1,
-        referencedIconLibrary: "",
-        iconLibraryType: "",
+        description: [options.description, GENERATED_MARKER].filter(Boolean).join(options.description?.includes("\n") ? "\n" : " "),
+        color: { ...(options.color ?? { r: 0.9, g: 0.45, b: 0.1 }), a: 1 },
+        iconID: options.icon ?? -1,
+        // Icon IDs refer to the game's icon library.
+        referencedIconLibrary: options.icon !== undefined ? "/Game/FactoryGame/-Shared/Blueprint/IconLibrary" : "",
+        iconLibraryType: options.icon !== undefined ? "IconLibrary" : "",
       },
       objects: this.objects,
     };
